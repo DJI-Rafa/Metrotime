@@ -41,8 +41,14 @@ import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.layers.CircleLayer
 import org.maplibre.android.style.layers.LineLayer
+import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.layers.PropertyFactory.*
+import org.maplibre.android.style.expressions.Expression.get
 import org.maplibre.android.style.sources.GeoJsonSource
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Path
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -279,6 +285,37 @@ private fun lineColorInt(lineName: String): Int = when (lineName) {
     else       -> AndroidColor.WHITE
 }
 
+private fun createArrowBitmap(color: Int): Bitmap {
+    val size = 64
+    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = color
+        style = Paint.Style.FILL
+    }
+    
+    // Draw an arrow pointing UP (0 degrees bearing)
+    val path = Path().apply {
+        moveTo(size / 2f, 0f)                   // Top tip
+        lineTo(size.toFloat() - 10f, size.toFloat())  // Bottom right
+        lineTo(size / 2f, size * 0.7f)          // Bottom center intent
+        lineTo(10f, size.toFloat())             // Bottom left
+        close()
+    }
+    canvas.drawPath(path, paint)
+
+    val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = AndroidColor.WHITE
+        style = Paint.Style.STROKE
+        strokeWidth = 5f
+        strokeJoin = Paint.Join.ROUND
+    }
+    canvas.drawPath(path, strokePaint)
+
+    return bitmap
+}
+
 private fun setupMapLayers(style: Style) {
     val coords    = MapConfiguration.STATION_COORDS
     val lineOrder = MapConfiguration.LINE_STATION_ORDER
@@ -345,14 +382,18 @@ private fun setupMapLayers(style: Style) {
 
     // ── Per-line train layers (empty initially) ────────────────────────────────
     for (lineName in LINE_NAMES) {
+        val arrowImageId = "arrow-$lineName"
+        style.addImage(arrowImageId, createArrowBitmap(lineColorInt(lineName)))
+        
         if (style.getSource("trains-src-$lineName") == null) {
             style.addSource(GeoJsonSource("trains-src-$lineName", empty))
             style.addLayer(
-                CircleLayer("trains-layer-$lineName", "trains-src-$lineName").withProperties(
-                    circleRadius(9f),
-                    circleColor(lineColorInt(lineName)),
-                    circleStrokeWidth(2.5f),
-                    circleStrokeColor(AndroidColor.WHITE)
+                SymbolLayer("trains-layer-$lineName", "trains-src-$lineName").withProperties(
+                    iconImage(arrowImageId),
+                    iconRotate(get("bearing")),
+                    iconAllowOverlap(true),
+                    iconIgnorePlacement(true),
+                    iconSize(1.0f)
                 )
             )
         }
@@ -380,6 +421,7 @@ private fun updateTrainMarkers(map: MapLibreMap, trains: List<TrainPosition>) {
                         .put("line",        train.line)
                         .put("destination", train.destination)
                         .put("nextStation", train.nextStationName)
+                        .put("bearing",     train.bearing)
                         .put("seconds",     train.secondsToNextStation))
             )
         }
