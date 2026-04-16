@@ -26,7 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.collectAsState
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.example.metrotime.data.MapConfiguration
@@ -159,8 +159,8 @@ class LiveMapActivity : ComponentActivity() {
 
 @Composable
 fun LiveMapOverlay(viewModel: LiveMapViewModel, onBack: () -> Unit) {
-    val selectedTrain by viewModel.selectedTrain.collectAsStateWithLifecycle()
-    val isLoading     by viewModel.isLoading.collectAsStateWithLifecycle()
+    val selectedTrain by viewModel.selectedTrain.collectAsState()
+    val isLoading     by viewModel.isLoading.collectAsState()
 
     Box(modifier = Modifier.fillMaxSize()) {
 
