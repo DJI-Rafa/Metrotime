@@ -3,6 +3,7 @@ package com.example.metrotime.ui
 import android.graphics.Color as AndroidColor
 import android.os.Bundle
 import android.view.Gravity
+import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
@@ -24,10 +25,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.example.metrotime.data.MapConfiguration
 import com.example.metrotime.data.TrainPosition
 import com.example.metrotime.ui.theme.*
+import kotlinx.coroutines.launch
 import org.maplibre.android.MapLibre
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.geometry.LatLng
@@ -44,116 +49,125 @@ import org.json.JSONObject
 class LiveMapActivity : ComponentActivity() {
 
     private val viewModel: LiveMapViewModel by viewModels()
-    private var mapView: MapView? = null
+
+    // MapView is created and fully owned by the Activity, NOT Compose
+    private lateinit var mapView: MapView
+    private var mapLibreMap: MapLibreMap? = null
+    private var styleReady = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // 1. Init MapLibre (must be first)
         MapLibre.getInstance(this)
 
+        // 2. Create and boot the MapView with the saved state — CRITICAL
+        mapView = MapView(this)
+        mapView.onCreate(savedInstanceState)
+
+        // 3. Load the map async
+        mapView.getMapAsync { map ->
+            mapLibreMap = map
+            map.uiSettings.apply {
+                isCompassEnabled = false
+                isLogoEnabled = false
+                isAttributionEnabled = true
+                attributionGravity = Gravity.BOTTOM or Gravity.END
+            }
+            map.cameraPosition = CameraPosition.Builder()
+                .target(LatLng(38.737, -9.137))
+                .zoom(11.5)
+                .build()
+
+            // Use CARTO dark matter — free, reliable dark theme
+            map.setStyle(Style.Builder().fromUri(
+                "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+            )) { style ->
+                styleReady = true
+                try {
+                    setupMapLayers(style)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+
+                // Wire up train tap
+                val tapLayerIds: Array<String> =
+                    LINE_NAMES.map { "trains-layer-$it" }.toTypedArray()
+                map.addOnMapClickListener { point ->
+                    val screen = map.projection.toScreenLocation(point)
+                    for (layerId in tapLayerIds) {
+                        val hits = map.queryRenderedFeatures(screen, layerId)
+                        if (hits.isNotEmpty()) {
+                            val trainId = hits[0].getStringProperty("trainId") ?: continue
+                            val tapped = viewModel.trains.value.find { t -> t.id == trainId }
+                            viewModel.selectTrain(tapped)
+                            return@addOnMapClickListener true
+                        }
+                    }
+                    false
+                }
+            }
+        }
+
+        // 4. Observe trains and update map markers
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.trains.collect { trains ->
+                    if (styleReady) {
+                        mapLibreMap?.let { updateTrainMarkers(it, trains) }
+                    }
+                }
+            }
+        }
+
+        // 5. Set Compose content — Compose just provides the overlay UI
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                Surface(modifier = Modifier.fillMaxSize(), color = DarkBackground) {
-                    LiveMapScreen(
+                Box(modifier = Modifier.fillMaxSize()) {
+
+                    // The MapView is inserted as a native Android View
+                    AndroidView(
+                        factory = { mapView },
+                        modifier = Modifier.fillMaxSize()
+                    )
+
+                    // Compose overlay: top bar + loading + bottom sheet
+                    LiveMapOverlay(
                         viewModel = viewModel,
-                        onBack = { finish() },
-                        onMapViewCreated = { mv -> mapView = mv }
+                        onBack = { finish() }
                     )
                 }
             }
         }
     }
 
-    override fun onStart()    { super.onStart();    mapView?.onStart() }
-    override fun onResume()   { super.onResume();   mapView?.onResume() }
-    override fun onPause()    { super.onPause();    mapView?.onPause() }
-    override fun onStop()     { super.onStop();     mapView?.onStop() }
-    override fun onLowMemory(){ super.onLowMemory();mapView?.onLowMemory() }
-    override fun onDestroy()  { super.onDestroy();  mapView?.onDestroy() }
+    override fun onStart()    { super.onStart();    mapView.onStart() }
+    override fun onResume()   { super.onResume();   mapView.onResume() }
+    override fun onPause()    { super.onPause();    mapView.onPause() }
+    override fun onStop()     { super.onStop();     mapView.onStop() }
+    override fun onLowMemory(){ super.onLowMemory();mapView.onLowMemory() }
+    override fun onDestroy()  { super.onDestroy();  mapView.onDestroy() }
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        mapView?.onSaveInstanceState(outState)
+        mapView.onSaveInstanceState(outState)
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Composable UI
+// Compose Overlay (pure UI, no MapLibre dependencies)
 // ──────────────────────────────────────────────────────────────────────────────
 
 @Composable
-fun LiveMapScreen(
-    viewModel: LiveMapViewModel,
-    onBack: () -> Unit,
-    onMapViewCreated: (MapView) -> Unit
-) {
-    val trains       by viewModel.trains.collectAsStateWithLifecycle()
+fun LiveMapOverlay(viewModel: LiveMapViewModel, onBack: () -> Unit) {
     val selectedTrain by viewModel.selectedTrain.collectAsStateWithLifecycle()
-    val isLoading    by viewModel.isLoading.collectAsStateWithLifecycle()
-
-    var mapLibreMap by remember { mutableStateOf<MapLibreMap?>(null) }
-    var styleLoaded by remember { mutableStateOf(false) }
-
-    // Keep a stable reference so the click handler sees the current trains list
-    val trainsRef = rememberUpdatedState<List<TrainPosition>>(trains)
+    val isLoading     by viewModel.isLoading.collectAsStateWithLifecycle()
 
     Box(modifier = Modifier.fillMaxSize()) {
-
-        // ── MapView ────────────────────────────────────────────────────────────
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { ctx ->
-                MapView(ctx).also { mv ->
-                    onMapViewCreated(mv)
-                    mv.getMapAsync { map ->
-                        mapLibreMap = map
-                        map.uiSettings.apply {
-                            isCompassEnabled = false
-                            isLogoEnabled = false
-                            isAttributionEnabled = true
-                            attributionGravity = Gravity.BOTTOM or Gravity.END
-                        }
-                        map.cameraPosition = CameraPosition.Builder()
-                            .target(LatLng(38.737, -9.137))
-                            .zoom(11.5)
-                            .build()
-
-                        map.setStyle(
-                            Style.Builder().fromUri("https://tiles.openfreemap.org/styles/dark")
-                        ) { style ->
-                            styleLoaded = true
-                            setupMapLayers(style)
-                            // Wire up taps
-                            val tapLayerIds: Array<String> = LINE_NAMES.map { "trains-layer-$it" }.toTypedArray()
-                            map.addOnMapClickListener { point ->
-                                val screen = map.projection.toScreenLocation(point)
-                                for (layerId in tapLayerIds) {
-                                    val hits = map.queryRenderedFeatures(screen, layerId)
-                                    if (hits.isNotEmpty()) {
-                                        val id = hits[0].getStringProperty("trainId")
-                                        if (id != null) {
-                                            val tapped: TrainPosition? = trainsRef.value.find { t -> t.id == id }
-                                            viewModel.selectTrain(tapped)
-                                            return@addOnMapClickListener true
-                                        }
-                                    }
-                                }
-                                false
-                            }
-                        }
-                    }
-                }
-            }
-        )
-
-        // Update train marker positions whenever trains state or style readiness changes
-        LaunchedEffect(trains, styleLoaded) {
-            val map = mapLibreMap ?: return@LaunchedEffect
-            if (styleLoaded) updateTrainMarkers(map, trains)
-        }
 
         // ── Top Bar ────────────────────────────────────────────────────────────
         Surface(
             modifier = Modifier.fillMaxWidth().align(Alignment.TopStart),
-            color = DarkBackground.copy(alpha = 0.92f),
+            color = DarkBackground.copy(alpha = 0.90f),
             shadowElevation = 4.dp
         ) {
             Row(
@@ -169,25 +183,31 @@ fun LiveMapScreen(
             }
         }
 
-        // ── Loading ────────────────────────────────────────────────────────────
+        // ── Loading spinner ────────────────────────────────────────────────────
         if (isLoading) {
             Box(
-                modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.3f)),
                 contentAlignment = Alignment.Center
-            ) { CircularProgressIndicator(color = Color.White) }
+            ) {
+                CircularProgressIndicator(color = Color.White)
+            }
         }
 
-        // ── Bottom Info Sheet ──────────────────────────────────────────────────
-        val currentTrain: TrainPosition? = selectedTrain
+        // ── Train info bottom sheet ────────────────────────────────────────────
+        val safeTrain: TrainPosition? = selectedTrain
         AnimatedVisibility(
-            visible = currentTrain != null,
+            visible = safeTrain != null,
             enter = slideInVertically(initialOffsetY = { it }),
             exit  = slideOutVertically(targetOffsetY = { it }),
             modifier = Modifier.align(Alignment.BottomCenter)
         ) {
-            val safeTrain = currentTrain
             if (safeTrain != null) {
-                TrainInfoSheet(train = safeTrain, onDismiss = { viewModel.selectTrain(null) })
+                TrainInfoSheet(
+                    train = safeTrain,
+                    onDismiss = { viewModel.selectTrain(null) }
+                )
             }
         }
     }
@@ -202,8 +222,8 @@ private fun TrainInfoSheet(train: TrainPosition, onDismiss: () -> Unit) {
         "Vermelha" -> LineVermelha
         else       -> Color.Gray
     }
-    val minutes = train.secondsToNextStation / 60
-    val seconds = train.secondsToNextStation % 60
+    val minutes   = train.secondsToNextStation / 60
+    val seconds   = train.secondsToNextStation % 60
     val timeStr   = if (train.secondsToNextStation <= 30) "A chegar!" else "%02d:%02d".format(minutes, seconds)
     val timeColor = if (train.secondsToNextStation <= 60) Color(0xFFFF5252) else Color.White
 
@@ -229,7 +249,7 @@ private fun TrainInfoSheet(train: TrainPosition, onDismiss: () -> Unit) {
                 Text("Linha: ${train.line}", color = lineColor, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
             }
             Spacer(Modifier.height(6.dp))
-            Text("Destino: ${train.destination}",          color = Color.White,     fontSize = 15.sp)
+            Text("Destino: ${train.destination}",             color = Color.White,     fontSize = 15.sp)
             Spacer(Modifier.height(4.dp))
             Text("Próxima Estação: ${train.nextStationName}", color = Color.LightGray, fontSize = 14.sp)
             Spacer(Modifier.height(4.dp))
@@ -246,7 +266,7 @@ private fun TrainInfoSheet(train: TrainPosition, onDismiss: () -> Unit) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Map Layer Helpers (non-Composable)
+// Map Layer Helpers (pure non-Compose, called on map thread)
 // ──────────────────────────────────────────────────────────────────────────────
 
 private val LINE_NAMES = listOf("Azul", "Amarela", "Verde", "Vermelha")
@@ -266,66 +286,76 @@ private fun setupMapLayers(style: Style) {
 
     // ── Metro route lines ──────────────────────────────────────────────────────
     for ((lineName, stationIds) in lineOrder) {
-        val coords2 = JSONArray()
+        val coordsArr = JSONArray()
         for (id in stationIds) {
             val c = coords[id] ?: continue
-            coords2.put(JSONArray().put(c.lon).put(c.lat))
+            coordsArr.put(JSONArray().put(c.lon).put(c.lat))
         }
         val geoJson = JSONObject()
             .put("type", "Feature")
-            .put("geometry", JSONObject().put("type", "LineString").put("coordinates", coords2))
+            .put("geometry", JSONObject()
+                .put("type", "LineString")
+                .put("coordinates", coordsArr))
             .put("properties", JSONObject())
             .toString()
 
-        style.addSource(GeoJsonSource("line-src-$lineName", geoJson))
-        style.addLayer(
-            LineLayer("line-layer-$lineName", "line-src-$lineName").withProperties(
-                lineColor(lineColorInt(lineName)),
-                lineWidth(4f),
-                lineCap("round"),
-                lineJoin("round")
+        if (style.getSource("line-src-$lineName") == null) {
+            style.addSource(GeoJsonSource("line-src-$lineName", geoJson))
+            style.addLayer(
+                LineLayer("line-layer-$lineName", "line-src-$lineName").withProperties(
+                    lineColor(lineColorInt(lineName)),
+                    lineWidth(4f),
+                    lineCap("round"),
+                    lineJoin("round")
+                )
             )
-        )
+        }
     }
 
     // ── Station dots ───────────────────────────────────────────────────────────
-    val stationFeatures = JSONArray()
-    for ((id, coord) in coords) {
-        stationFeatures.put(
-            JSONObject()
-                .put("type", "Feature")
-                .put("geometry", JSONObject()
-                    .put("type", "Point")
-                    .put("coordinates", JSONArray().put(coord.lon).put(coord.lat)))
-                .put("properties", JSONObject().put("id", id).put("name", coord.name))
+    if (style.getSource("stations-src") == null) {
+        val stationFeatures = JSONArray()
+        for ((id, coord) in coords) {
+            stationFeatures.put(
+                JSONObject()
+                    .put("type", "Feature")
+                    .put("geometry", JSONObject()
+                        .put("type", "Point")
+                        .put("coordinates", JSONArray().put(coord.lon).put(coord.lat)))
+                    .put("properties", JSONObject()
+                        .put("id", id)
+                        .put("name", coord.name))
+            )
+        }
+        val stationGeoJson = JSONObject()
+            .put("type", "FeatureCollection")
+            .put("features", stationFeatures)
+            .toString()
+
+        style.addSource(GeoJsonSource("stations-src", stationGeoJson))
+        style.addLayer(
+            CircleLayer("stations-layer", "stations-src").withProperties(
+                circleRadius(5f),
+                circleColor(AndroidColor.WHITE),
+                circleStrokeWidth(1.5f),
+                circleStrokeColor(AndroidColor.parseColor("#333333"))
+            )
         )
     }
-    val stationGeoJson = JSONObject()
-        .put("type", "FeatureCollection")
-        .put("features", stationFeatures)
-        .toString()
-
-    style.addSource(GeoJsonSource("stations-src", stationGeoJson))
-    style.addLayer(
-        CircleLayer("stations-layer", "stations-src").withProperties(
-            circleRadius(5f),
-            circleColor(AndroidColor.WHITE),
-            circleStrokeWidth(1.5f),
-            circleStrokeColor(AndroidColor.parseColor("#333333"))
-        )
-    )
 
     // ── Per-line train layers (empty initially) ────────────────────────────────
     for (lineName in LINE_NAMES) {
-        style.addSource(GeoJsonSource("trains-src-$lineName", empty))
-        style.addLayer(
-            CircleLayer("trains-layer-$lineName", "trains-src-$lineName").withProperties(
-                circleRadius(9f),
-                circleColor(lineColorInt(lineName)),
-                circleStrokeWidth(2.5f),
-                circleStrokeColor(AndroidColor.WHITE)
+        if (style.getSource("trains-src-$lineName") == null) {
+            style.addSource(GeoJsonSource("trains-src-$lineName", empty))
+            style.addLayer(
+                CircleLayer("trains-layer-$lineName", "trains-src-$lineName").withProperties(
+                    circleRadius(9f),
+                    circleColor(lineColorInt(lineName)),
+                    circleStrokeWidth(2.5f),
+                    circleStrokeColor(AndroidColor.WHITE)
+                )
             )
-        )
+        }
     }
 }
 
