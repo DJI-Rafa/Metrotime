@@ -22,6 +22,10 @@
         <activity 
             android:name=".ui.StationArrivalsActivity"
             android:parentActivityName=".ui.LineStationsActivity" />
+        <activity
+            android:name=".ui.LiveMapActivity"
+            android:label="Live Map"
+            android:theme="@style/Theme.Metrotime.App" />
 
         <activity
             android:name=".ui.AuthActivity"

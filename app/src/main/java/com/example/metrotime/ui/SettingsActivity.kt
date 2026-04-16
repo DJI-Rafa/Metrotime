@@ -139,8 +139,12 @@ fun SettingsScreen(activity: ComponentActivity) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                BottomActionButton("Live Map", "🗺️")
-                BottomActionButton("Favoritos", "⭐")
+                BottomActionButton("Live Map", "🗺️") {
+                    activity.startActivity(
+                        android.content.Intent(activity, LiveMapActivity::class.java)
+                    )
+                }
+                BottomActionButton("Favoritos", "⭐") { }
             }
             
             Spacer(modifier = Modifier.height(32.dp))
@@ -168,9 +172,9 @@ fun LineButton(text: String, containerColor: Color, textColor: Color = Color.Whi
 }
 
 @Composable
-fun BottomActionButton(text: String, emoji: String) {
+fun BottomActionButton(text: String, emoji: String, onClick: () -> Unit = {}) {
     Button(
-        onClick = { /* TODO */ },
+        onClick = onClick,
         modifier = Modifier
             .width(150.dp)
             .height(80.dp),
