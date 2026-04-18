@@ -10,5 +10,19 @@ data class StationArrivals(
 // Simplified, clean data class for a single arrival
 data class Arrival(
     val direction: String,
-    val minutes: Int
+    val minutes: Int,
+    val line: String = ""
+)
+
+data class LineArrivals(
+    val line: String,
+    val arrivals: List<LineArrival>
+)
+
+data class LineArrival(
+    val stationId: String,
+    val trainId: String,
+    val destinationId: String,
+    val destinationName: String,
+    val secondsToArrive: Int
 )

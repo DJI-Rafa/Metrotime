@@ -67,8 +67,9 @@ class StationArrivalsActivity : ComponentActivity() {
 
 data class ArrivalGroup(
     val destination: String,
-    val times: String,
-    val lineColor: Color
+    val arrivalTimesSec: List<Int>,
+    val fetchedAtMillis: Long,
+    val lineColors: List<Color>
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -78,6 +79,14 @@ fun StationArrivalsScreen(activity: ComponentActivity, stationId: String) {
     var station by remember { mutableStateOf<Station?>(null) }
     var arrivalGroups by remember { mutableStateOf<List<ArrivalGroup>>(emptyList()) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
+    var currentTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    LaunchedEffect(Unit) {
+        while (isActive) {
+            currentTime = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
 
     LaunchedEffect(stationId) {
         station = withContext(Dispatchers.IO) {
@@ -88,13 +97,13 @@ fun StationArrivalsScreen(activity: ComponentActivity, stationId: String) {
             station?.let { currentStation ->
                 try {
                     val arrivalsResponse = source.fetchArrivals(currentStation.apiId)
-                    arrivalGroups = groupAndFormatArrivals(arrivalsResponse.arrivals, activity)
+                    arrivalGroups = groupAndFormatArrivals(arrivalsResponse, activity)
                     errorMsg = null
                 } catch (e: Exception) {
                     errorMsg = "Erro ao carregar tempos: ${e.javaClass.simpleName}"
                 }
             }
-            delay(2000)
+            delay(15000)
         }
     }
 
@@ -159,7 +168,7 @@ fun StationArrivalsScreen(activity: ComponentActivity, stationId: String) {
                 }
             } else {
                 items(arrivalGroups) { group ->
-                    ArrivalCard(group)
+                    ArrivalCard(group, currentTime)
                 }
             }
         }
@@ -167,7 +176,7 @@ fun StationArrivalsScreen(activity: ComponentActivity, stationId: String) {
 }
 
 @Composable
-fun ArrivalCard(group: ArrivalGroup) {
+fun ArrivalCard(group: ArrivalGroup, currentTimeMillis: Long) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = CardBackground),
@@ -175,13 +184,19 @@ fun ArrivalCard(group: ArrivalGroup) {
     ) {
         Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
             // Colored strip
-            Box(
+            Column(
                 modifier = Modifier
                     .width(8.dp)
                     .fillMaxHeight()
                     .clip(RoundedCornerShape(topStart = 8.dp, bottomStart = 8.dp))
-                    .background(group.lineColor)
-            )
+            ) {
+                if (group.lineColors.size > 1) {
+                    Box(modifier = Modifier.fillMaxWidth().weight(1f).background(group.lineColors[0]))
+                    Box(modifier = Modifier.fillMaxWidth().weight(1f).background(group.lineColors[1]))
+                } else {
+                    Box(modifier = Modifier.fillMaxWidth().fillMaxHeight().background(group.lineColors.firstOrNull() ?: Color.Gray))
+                }
+            }
             
             Row(
                 modifier = Modifier
@@ -205,8 +220,12 @@ fun ArrivalCard(group: ArrivalGroup) {
                         fontWeight = FontWeight.Normal
                     )
                     Spacer(modifier = Modifier.height(4.dp))
+                    
+                    val elapsedSec = ((currentTimeMillis - group.fetchedAtMillis) / 1000).toInt()
+                    val timesStr = group.arrivalTimesSec.map { maxOf(0, it - elapsedSec) }.joinToString(", ") { formatTime(it) }
+
                     Text(
-                        text = "Tempos: ${group.times}",
+                        text = "Tempos: $timesStr",
                         color = Color.LightGray,
                         fontSize = 14.sp
                     )
@@ -223,30 +242,32 @@ private fun formatTime(totalSeconds: Int): String {
     return String.format("%02d:%02d", minutes, seconds)
 }
 
-private suspend fun groupAndFormatArrivals(arrivals: List<Arrival>, context: Context): List<ArrivalGroup> {
-    if (arrivals.isEmpty()) return emptyList()
+private suspend fun groupAndFormatArrivals(stationArrivals: com.example.metrotime.data.StationArrivals, context: Context): List<ArrivalGroup> {
+    if (stationArrivals.arrivals.isEmpty()) return emptyList()
 
     val allStations = StationsRepo.loadStations(context)
 
-    return arrivals
+    return stationArrivals.arrivals
         .groupBy { it.direction }
         .map { (direction, arrivalsForDirection) ->
-            val times = arrivalsForDirection
+            val arrivalTimesSec = arrivalsForDirection
                 .sortedBy { it.minutes }
                 .take(3)
-                .joinToString(", ") { formatTime(it.minutes) }
+                .map { it.minutes }
                 
             val destinationStation = allStations.find { it.name.equals(direction, ignoreCase = true) }
-            val primaryLine = destinationStation?.line?.split(" ")?.firstOrNull() ?: ""
+            val linesStr = destinationStation?.line?.split(" ") ?: listOf()
             
-            val color = when {
-                primaryLine.equals("Azul", ignoreCase = true) -> LineAzul
-                primaryLine.equals("Amarela", ignoreCase = true) -> LineAmarela
-                primaryLine.equals("Verde", ignoreCase = true) -> LineVerde
-                primaryLine.equals("Vermelha", ignoreCase = true) -> LineVermelha
-                else -> Color.Gray
-            }
+            val colors = linesStr.map { lineStr ->
+                when {
+                    lineStr.equals("Azul", ignoreCase = true) -> LineAzul
+                    lineStr.equals("Amarela", ignoreCase = true) -> LineAmarela
+                    lineStr.equals("Verde", ignoreCase = true) -> LineVerde
+                    lineStr.equals("Vermelha", ignoreCase = true) -> LineVermelha
+                    else -> Color.Gray
+                }
+            }.ifEmpty { listOf(Color.Gray) }
 
-            ArrivalGroup(direction, times, color)
+            ArrivalGroup(direction, arrivalTimesSec, stationArrivals.fetchedAtMillis, colors)
         }
 }

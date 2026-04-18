@@ -16,7 +16,10 @@ data class MetroLisboaArrivalResponse(
 data class ApiPlatformArrival(
     @Json(name = "stop_id") val stationId: String?,
     @Json(name = "destino") val destination: String?,
+    @Json(name = "comboio") val comboio1: String?,
     @Json(name = "tempoChegada1") val time1: String?,
+    @Json(name = "comboio2") val comboio2: String?,
     @Json(name = "tempoChegada2") val time2: String?,
+    @Json(name = "comboio3") val comboio3: String?,
     @Json(name = "tempoChegada3") val time3: String?,
 )

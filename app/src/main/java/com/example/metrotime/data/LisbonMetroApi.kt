@@ -22,6 +22,9 @@ class RemoteArrivalsSource(private val context: Context) : ArrivalsSource {
     interface Api {
         @GET("tempoEspera/Estacao/{station_id}")
         suspend fun getStationArrivals(@Path("station_id") stationId: String): MetroLisboaArrivalResponse
+
+        @GET("tempoEspera/Linha/{linha}")
+        suspend fun getLineArrivals(@Path("linha") linha: String): MetroLisboaArrivalResponse
     }
 
     private val api: Api by lazy {
@@ -85,15 +88,32 @@ class RemoteArrivalsSource(private val context: Context) : ArrivalsSource {
 
             if (destinationCode != null) {
                 val directionName = directionNameMap[destinationCode] ?: "Destino $destinationCode"
+                
+                // Infer line from destination Name
+                var inferredLine = "Desconhecida"
+                val destCoord = MapConfiguration.STATION_COORDS.values.find { it.name == directionName }
+                if (destCoord != null) {
+                    val destId = destCoord.id
+                    for ((lineN, stationsIds) in MapConfiguration.LINE_STATION_ORDER) {
+                        // If it's a terminal of that line, prefer it. Otherwise just if it contains.
+                        if (stationsIds.first() == destId || stationsIds.last() == destId) {
+                            inferredLine = lineN
+                            break
+                        }
+                        if (stationsIds.contains(destId)) {
+                            inferredLine = lineN
+                        }
+                    }
+                }
 
                 platformArrival.time1?.takeIf { it.isNotBlank() && it != "--" }?.toIntOrNull()?.let {
-                    arrivals.add(Arrival(directionName, it))
+                    arrivals.add(Arrival(directionName, it, inferredLine))
                 }
                 platformArrival.time2?.takeIf { it.isNotBlank() && it != "--" }?.toIntOrNull()?.let {
-                    arrivals.add(Arrival(directionName, it))
+                    arrivals.add(Arrival(directionName, it, inferredLine))
                 }
                 platformArrival.time3?.takeIf { it.isNotBlank() && it != "--" }?.toIntOrNull()?.let {
-                    arrivals.add(Arrival(directionName, it))
+                    arrivals.add(Arrival(directionName, it, inferredLine))
                 }
             }
             arrivals
@@ -104,5 +124,37 @@ class RemoteArrivalsSource(private val context: Context) : ArrivalsSource {
             ?: Station(stationId, stationId, 0.0, 0.0, "", stationId) // Fallback
 
         return StationArrivals(station, stationSpecificArrivals, System.currentTimeMillis())
+    }
+
+    override suspend fun fetchLineArrivals(linha: String): LineArrivals {
+        val response = api.getLineArrivals(linha)
+        val arrivalsFromApi = response.arrivals ?: emptyList()
+
+        val parsedArrivals = mutableListOf<LineArrival>()
+
+        for (platformArrival in arrivalsFromApi) {
+            val stationId = platformArrival.stationId ?: continue
+            val destinationCode = platformArrival.destination ?: continue
+            val directionName = directionNameMap[destinationCode] ?: "Destino $destinationCode"
+
+            // Parse up to 3 train arrivals for this station
+            if (platformArrival.comboio1 != null && platformArrival.time1 != null && platformArrival.time1 != "--") {
+                platformArrival.time1.toIntOrNull()?.let { timeSec ->
+                    parsedArrivals.add(LineArrival(stationId, platformArrival.comboio1, destinationCode, directionName, timeSec))
+                }
+            }
+            if (platformArrival.comboio2 != null && platformArrival.time2 != null && platformArrival.time2 != "--") {
+                platformArrival.time2.toIntOrNull()?.let { timeSec ->
+                    parsedArrivals.add(LineArrival(stationId, platformArrival.comboio2, destinationCode, directionName, timeSec))
+                }
+            }
+            if (platformArrival.comboio3 != null && platformArrival.time3 != null && platformArrival.time3 != "--") {
+                platformArrival.time3.toIntOrNull()?.let { timeSec ->
+                    parsedArrivals.add(LineArrival(stationId, platformArrival.comboio3, destinationCode, directionName, timeSec))
+                }
+            }
+        }
+
+        return LineArrivals(linha, parsedArrivals)
     }
 }

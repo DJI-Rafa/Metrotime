@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+        <TextView
+            android:id="@+id/txtExpandedStation"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="🚇 Metropolitano"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+        <TextView
+            android:id="@+id/txtExpandedUpdated"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="A conectar..."
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <!-- Divider: using a TextView with minimal height instead of View (not allowed in RemoteViews) -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginTop="10dp"
+        android:layout_marginBottom="10dp"
+        android:background="#33888888" />
+
+    <!-- Arrival 1 -->
+    <TextView
+        android:id="@+id/txtExpandedArr1"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="14sp"
+        android:paddingTop="3dp"
+        android:paddingBottom="3dp" />
+
+    <!-- Arrival 2 -->
+    <TextView
+        android:id="@+id/txtExpandedArr2"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="14sp"
+        android:paddingTop="3dp"
+        android:paddingBottom="3dp" />
+
+    <!-- Arrival 3 -->
+    <TextView
+        android:id="@+id/txtExpandedArr3"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="14sp"
+        android:paddingTop="3dp"
+        android:paddingBottom="3dp" />
+
+</LinearLayout>

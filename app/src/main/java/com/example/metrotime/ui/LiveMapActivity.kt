@@ -11,6 +11,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -110,6 +112,17 @@ class LiveMapActivity : ComponentActivity() {
                             return@addOnMapClickListener true
                         }
                     }
+                    
+                    val stationHits = map.queryRenderedFeatures(screen, "stations-layer")
+                    if (stationHits.isNotEmpty()) {
+                        val stationId = stationHits[0].getStringProperty("id") ?: return@addOnMapClickListener false
+                        val stationName = stationHits[0].getStringProperty("name") ?: stationId
+                        viewModel.selectStation(stationId, stationName)
+                        return@addOnMapClickListener true
+                    }
+                    
+                    viewModel.selectTrain(null)
+                    viewModel.selectStation(null)
                     false
                 }
             }
@@ -166,6 +179,7 @@ class LiveMapActivity : ComponentActivity() {
 @Composable
 fun LiveMapOverlay(viewModel: LiveMapViewModel, onBack: () -> Unit) {
     val selectedTrain by viewModel.selectedTrain.collectAsState()
+    val selectedStation by viewModel.selectedStation.collectAsState()
     val isLoading     by viewModel.isLoading.collectAsState()
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -201,8 +215,10 @@ fun LiveMapOverlay(viewModel: LiveMapViewModel, onBack: () -> Unit) {
             }
         }
 
-        // ── Train info bottom sheet ────────────────────────────────────────────
+        // ── Train / Station info bottom sheets ─────────────────────────────────
         val safeTrain: TrainPosition? = selectedTrain
+        val safeStation = selectedStation
+
         AnimatedVisibility(
             visible = safeTrain != null,
             enter = slideInVertically(initialOffsetY = { it }),
@@ -216,6 +232,139 @@ fun LiveMapOverlay(viewModel: LiveMapViewModel, onBack: () -> Unit) {
                 )
             }
         }
+
+        AnimatedVisibility(
+            visible = safeStation != null,
+            enter = slideInVertically(initialOffsetY = { it }),
+            exit  = slideOutVertically(targetOffsetY = { it }),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            if (safeStation != null) {
+                StationInfoSheet(
+                    stationState = safeStation,
+                    onDismiss = { viewModel.selectStation(null) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StationInfoSheet(stationState: LiveMapViewModel.SelectedStationState, onDismiss: () -> Unit) {
+    val stationLines = remember(stationState.id) {
+        MapConfiguration.LINE_STATION_ORDER.filter { it.value.contains(stationState.id) }.keys.toList()
+    }
+    var selectedTab by remember(stationState.id) { mutableStateOf(stationLines.firstOrNull() ?: "") }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth().navigationBarsPadding(),
+        color = Color(0xFF1C1C20),
+        shadowElevation = 12.dp,
+        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
+            Box(
+                modifier = Modifier
+                    .width(40.dp).height(4.dp)
+                    .background(Color.Gray.copy(alpha = 0.5f), RoundedCornerShape(2.dp))
+                    .align(Alignment.CenterHorizontally)
+            )
+            Spacer(Modifier.height(16.dp))
+            
+            Text(stationState.name, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(12.dp))
+            
+            if (stationLines.size > 1) {
+                // Interface station: render clickable chips
+                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    stationLines.forEach { line ->
+                        val lineColor = when (line) {
+                            "Azul"     -> LineAzul
+                            "Amarela"  -> LineAmarela
+                            "Verde"    -> LineVerde
+                            "Vermelha" -> LineVermelha
+                            else       -> Color.Gray
+                        }
+                        val isSelected = selectedTab == line
+                        Box(
+                            modifier = Modifier
+                                .background(if (isSelected) lineColor else Color.Transparent, RoundedCornerShape(16.dp))
+                                .border(1.dp, lineColor, RoundedCornerShape(16.dp))
+                                .clickable { selectedTab = line }
+                                .padding(horizontal = 14.dp, vertical = 6.dp)
+                        ) {
+                            Text("Linha $line", color = if (isSelected) Color.White else lineColor, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        }
+                    }
+                }
+            } else if (stationLines.isNotEmpty()) {
+                // Single line station
+                val line = stationLines.first()
+                val lineColor = when (line) {
+                    "Azul"     -> LineAzul
+                    "Amarela"  -> LineAmarela
+                    "Verde"    -> LineVerde
+                    "Vermelha" -> LineVermelha
+                    else       -> Color.Gray
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 12.dp)) {
+                    Icon(Icons.Default.Circle, contentDescription = null, tint = lineColor, modifier = Modifier.size(12.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Linha $line", color = lineColor, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
+            }
+            
+            if (stationState.loading) {
+                Spacer(Modifier.height(16.dp))
+                CircularProgressIndicator(color = Color.White, modifier = Modifier.align(Alignment.CenterHorizontally))
+                Spacer(Modifier.height(16.dp))
+            } else {
+                val arrivals = stationState.arrivals?.arrivals?.filter { it.line == selectedTab || selectedTab.isEmpty() } ?: emptyList()
+                if (arrivals.isEmpty()) {
+                    Text("Não há comboios previstos para esta linha.", color = Color.LightGray, fontSize = 14.sp)
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        arrivals.sortedBy { it.minutes }.take(4).forEach { arr ->
+                            val mins = arr.minutes / 60
+                            val secs = arr.minutes % 60
+                            val timeStr = when {
+                                arr.minutes <= 15 -> "Na estação."
+                                arr.minutes <= 30 -> "A chegar!"
+                                else -> "%02d:%02d".format(mins, secs)
+                            }
+                            
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(Color(0xFF2A2A30), RoundedCornerShape(12.dp))
+                                    .padding(vertical = 12.dp, horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text("Sentido", color = Color.Gray, fontSize = 12.sp)
+                                    Text(arr.direction, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Text(
+                                    text = timeStr,
+                                    color = if (arr.minutes <= 60) Color(0xFFFF5252) else Color.White,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            
+            Spacer(Modifier.height(20.dp))
+            OutlinedButton(
+                onClick = onDismiss,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+            ) { Text("Fechar") }
+            Spacer(Modifier.height(8.dp))
+        }
     }
 }
 
@@ -228,9 +377,16 @@ private fun TrainInfoSheet(train: TrainPosition, onDismiss: () -> Unit) {
         "Vermelha" -> LineVermelha
         else       -> Color.Gray
     }
+    
     val minutes   = train.secondsToNextStation / 60
     val seconds   = train.secondsToNextStation % 60
-    val timeStr   = if (train.secondsToNextStation <= 30) "A chegar!" else "%02d:%02d".format(minutes, seconds)
+    
+    val timeStr = when {
+        train.secondsToNextStation <= 15 -> "Na estação."
+        train.secondsToNextStation <= 30 -> "A chegar!"
+        else -> "%02d:%02d".format(minutes, seconds)
+    }
+    
     val timeColor = if (train.secondsToNextStation <= 60) Color(0xFFFF5252) else Color.White
 
     Surface(
@@ -247,7 +403,8 @@ private fun TrainInfoSheet(train: TrainPosition, onDismiss: () -> Unit) {
                     .align(Alignment.CenterHorizontally)
             )
             Spacer(Modifier.height(12.dp))
-            Text("Comboio", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            val topTitle = if (train.isGhost) "Comboio (Sem Sinal): ${train.id}" else "Comboio: ${train.id}"
+            Text(topTitle, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Circle, contentDescription = null, tint = lineColor, modifier = Modifier.size(14.dp))
@@ -285,7 +442,7 @@ private fun lineColorInt(lineName: String): Int = when (lineName) {
     else       -> AndroidColor.WHITE
 }
 
-private fun createArrowBitmap(color: Int): Bitmap {
+private fun createArrowBitmap(color: Int, isGhost: Boolean = false): Bitmap {
     val size = 64
     val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
@@ -293,6 +450,7 @@ private fun createArrowBitmap(color: Int): Bitmap {
     val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         this.color = color
         style = Paint.Style.FILL
+        if (isGhost) alpha = 150 // Semi-transparent for ghost
     }
     
     // Draw an arrow pointing UP (0 degrees bearing)
@@ -306,12 +464,22 @@ private fun createArrowBitmap(color: Int): Bitmap {
     canvas.drawPath(path, paint)
 
     val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        this.color = AndroidColor.WHITE
+        this.color = if (isGhost) AndroidColor.RED else AndroidColor.WHITE
         style = Paint.Style.STROKE
         strokeWidth = 5f
         strokeJoin = Paint.Join.ROUND
     }
     canvas.drawPath(path, strokePaint)
+
+    if (isGhost) {
+        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = AndroidColor.RED
+            textSize = 28f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            textAlign = Paint.Align.CENTER
+        }
+        canvas.drawText("?", size / 2f, size * 0.6f, textPaint)
+    }
 
     return bitmap
 }
@@ -380,20 +548,34 @@ private fun setupMapLayers(style: Style) {
         )
     }
 
+    // Add generic white arrows
+    style.addImage("arrow-white", createArrowBitmap(AndroidColor.WHITE, false))
+    style.addImage("arrow-ghost", createArrowBitmap(AndroidColor.WHITE, true))
+
     // ── Per-line train layers (empty initially) ────────────────────────────────
     for (lineName in LINE_NAMES) {
-        val arrowImageId = "arrow-$lineName"
-        style.addImage(arrowImageId, createArrowBitmap(lineColorInt(lineName)))
-        
         if (style.getSource("trains-src-$lineName") == null) {
             style.addSource(GeoJsonSource("trains-src-$lineName", empty))
             style.addLayer(
                 SymbolLayer("trains-layer-$lineName", "trains-src-$lineName").withProperties(
-                    iconImage(arrowImageId),
+                    iconImage(
+                        org.maplibre.android.style.expressions.Expression.switchCase(
+                            org.maplibre.android.style.expressions.Expression.eq(get("isGhost"), org.maplibre.android.style.expressions.Expression.literal(true)),
+                            org.maplibre.android.style.expressions.Expression.literal("arrow-ghost"),
+                            org.maplibre.android.style.expressions.Expression.literal("arrow-white")
+                        )
+                    ),
                     iconRotate(get("bearing")),
                     iconAllowOverlap(true),
                     iconIgnorePlacement(true),
-                    iconSize(1.0f)
+                    iconSize(
+                        org.maplibre.android.style.expressions.Expression.interpolate(
+                            org.maplibre.android.style.expressions.Expression.linear(),
+                            org.maplibre.android.style.expressions.Expression.zoom(),
+                            org.maplibre.android.style.expressions.Expression.stop(10f, 0.4f),
+                            org.maplibre.android.style.expressions.Expression.stop(14f, 1.0f)
+                        )
+                    )
                 )
             )
         }
@@ -422,7 +604,8 @@ private fun updateTrainMarkers(map: MapLibreMap, trains: List<TrainPosition>) {
                         .put("destination", train.destination)
                         .put("nextStation", train.nextStationName)
                         .put("bearing",     train.bearing)
-                        .put("seconds",     train.secondsToNextStation))
+                        .put("seconds",     train.secondsToNextStation)
+                        .put("isGhost",     train.isGhost))
             )
         }
 

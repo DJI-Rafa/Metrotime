@@ -4,6 +4,7 @@ import kotlin.random.Random
 
 interface ArrivalsSource {
     suspend fun fetchArrivals(stationId: String): StationArrivals
+    suspend fun fetchLineArrivals(linha: String): LineArrivals
 }
 
 class MockArrivalsSource : ArrivalsSource {
@@ -14,5 +15,9 @@ class MockArrivalsSource : ArrivalsSource {
         arrivals.add(Arrival("Mock Destination 2", Random.nextInt(10, 20)))
         // The station object here is a dummy one
         return StationArrivals(Station("", "Mock Station", 0.0, 0.0, "", ""), arrivals, System.currentTimeMillis())
+    }
+
+    override suspend fun fetchLineArrivals(linha: String): LineArrivals {
+        return LineArrivals(linha, emptyList())
     }
 }

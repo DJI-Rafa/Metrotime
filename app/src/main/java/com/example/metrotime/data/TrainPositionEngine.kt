@@ -4,6 +4,8 @@ import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.math.max
 import kotlin.math.min
@@ -17,15 +19,17 @@ data class TrainPosition(
     val lon: Double,
     val line: String,
     val destination: String,
+    val destinationId: String,
     val nextStationName: String,
+    val nextStationId: String,
     val secondsToNextStation: Int,
-    val bearing: Double
+    val bearing: Double,
+    val isGhost: Boolean = false
 )
 
 /**
- * Fetches arrivals from every station in parallel and infers train positions
- * by clustering absolute positions along the route to deduplicate the same train 
- * being reported by multiple stations.
+ * Fetches arrivals from line endpoints and infers train positions
+ * by tracking specific train IDs. Handles interpolation and ghost trains.
  */
 class TrainPositionEngine(private val context: Context) {
 
@@ -34,14 +38,26 @@ class TrainPositionEngine(private val context: Context) {
     private val lineStationOrder = MapConfiguration.LINE_STATION_ORDER
     private val segmentSeconds = MapConfiguration.SEGMENT_TRAVEL_SECONDS.toDouble()
 
-    suspend fun fetchAllTrainPositions(): List<TrainPosition> = withContext(Dispatchers.IO) {
-        val allStations = StationsRepo.loadStations(context)
+    // State retained across fetches
+    private val stateMutex = Mutex()
+    private val lastKnownPositions = mutableMapOf<String, TrainPosition>()
+    private val ghostTimestamps = mutableMapOf<String, Long>()
 
-        // Query all stations concurrently
-        val deferredResults = allStations.map { station ->
+    // Valid destinations that indicate a train should still be active
+    private val validDestinations = setOf(
+        "33", "34", "35", "36", "37", "38", "39", "40", "41", "42",
+        "43", "44", "45", "46", "48", "50", "51", "52", "53", "54",
+        "56", "57", "59", "60"
+    )
+
+    suspend fun fetchAllTrainPositions(): List<TrainPosition> = withContext(Dispatchers.IO) {
+        val lines = listOf("Amarela", "Azul", "Verde", "Vermelha")
+
+        // Query all lines concurrently
+        val deferredResults = lines.map { linha ->
             async {
                 try {
-                    arrivalsSource.fetchArrivals(station.apiId)
+                    arrivalsSource.fetchLineArrivals(linha)
                 } catch (e: Exception) {
                     null
                 }
@@ -50,112 +66,161 @@ class TrainPositionEngine(private val context: Context) {
 
         val results = deferredResults.awaitAll().filterNotNull()
         
-        // 1. Collect all valid raw predictions
-        // Key: "$lineName|$destination"
-        val rawPredictions = mutableMapOf<String, MutableList<RawPrediction>>()
+        val newPositionsMap = mutableMapOf<String, TrainPosition>()
+        val currentTime = System.currentTimeMillis()
 
-        for (stationArrivals in results) {
-            val station = stationArrivals.station
-            
-            for (arrival in stationArrivals.arrivals) {
-                val destination = arrival.direction
-                val secondsToStation = arrival.minutes
+        for (lineArrivals in results) {
+            val lineName = lineArrivals.line
+            val defaultOrder = lineStationOrder[lineName] ?: continue
+
+            // Group arrivals by train ID
+            val trainsById = lineArrivals.arrivals.groupBy { it.trainId }
+
+            for ((trainId, predictions) in trainsById) {
+                if (predictions.isEmpty()) continue
+
+                val validPredictions = predictions.filter { it.secondsToArrive >= 0 }
+                if (validPredictions.isEmpty()) continue
+
+                val closestPrediction = validPredictions.minByOrNull { it.secondsToArrive } ?: continue
                 
-                val (lineName, orderedStops) = MapConfiguration.DESTINATION_TO_ORDERED_STOPS[destination]
-                    ?: resolveLineFromStation(station, destination) ?: continue
-                    
-                val stationIndexInRoute = orderedStops.indexOf(station.apiId)
-                if (stationIndexInRoute < 0) continue
+                val destination = closestPrediction.destinationName
+                val destinationId = closestPrediction.destinationId
+                val nextStationId = closestPrediction.stationId
+                val secondsToNextStation = closestPrediction.secondsToArrive
 
-                // Absolute position: time from the very first station on the route
-                val absoluteTime = (stationIndexInRoute * segmentSeconds) - secondsToStation
+                // Deduce direction by comparing destination index with next station index
+                val destStationCoord = stationCoords.values.find { it.name == destination }
+                val destStationId = destStationCoord?.id ?: ""
                 
-                val key = "$lineName|$destination"
-                if (rawPredictions[key] == null) {
-                    rawPredictions[key] = mutableListOf()
-                }
-                rawPredictions[key]?.add(
-                    RawPrediction(lineName, destination, orderedStops, stationIndexInRoute, secondsToStation, absoluteTime)
-                )
-            }
-        }
-
-        // 2. Cluster predictions to deduplicate trains (threshold: 90 seconds)
-        val finalTrains = mutableListOf<TrainPosition>()
-        var trainIdCounter = 1
-
-        for ((key, predictions) in rawPredictions) {
-            if (predictions.isEmpty()) continue
-            
-            // Sort by absolute time (position along the route)
-            predictions.sortBy { it.absoluteTime }
-            
-            val clusters = mutableListOf<MutableList<RawPrediction>>()
-            var currentCluster = mutableListOf(predictions.first())
-            clusters.add(currentCluster)
-            
-            for (i in 1 until predictions.size) {
-                val prediction = predictions[i]
-                val prevPrediction = currentCluster.last()
+                val destIndex = defaultOrder.indexOf(destStationId)
+                val nextIdx = defaultOrder.indexOf(nextStationId)
                 
-                // If it's within 120 seconds of the last prediction, it's the same train
-                if (prediction.absoluteTime - prevPrediction.absoluteTime < 120.0) {
-                    currentCluster.add(prediction)
+                val orderedStops = if (destIndex >= 0 && nextIdx >= 0) {
+                    if (destIndex < nextIdx || destStationId == defaultOrder.first()) {
+                        defaultOrder.reversed()
+                    } else {
+                        defaultOrder
+                    }
                 } else {
-                    currentCluster = mutableListOf(prediction)
-                    clusters.add(currentCluster)
+                    defaultOrder
                 }
-            }
-            
-            // 3. Resolve each cluster into a single TrainPosition
-            for (cluster in clusters) {
-                // Average the absolute time
-                val avgAbsoluteTime = cluster.map { it.absoluteTime }.average()
-                val lineName = cluster.first().lineName
-                val destination = cluster.first().destination
-                val orderedStops = cluster.first().orderedStops
-                
-                // Which stations is it actually between?
-                var pathIndex = Math.floor(avgAbsoluteTime / segmentSeconds).toInt()
-                pathIndex = max(0, min(orderedStops.size - 2, pathIndex))
-                
-                // Progress between pathIndex and pathIndex + 1
-                val progress = max(0.0, min(1.0, (avgAbsoluteTime - (pathIndex * segmentSeconds)) / segmentSeconds))
-                
-                val prevStationId = orderedStops[pathIndex]
-                val nextStationId = orderedStops[pathIndex + 1]
-                
+
+                // Which index is the next station?
+                val nextStationIndex = orderedStops.indexOf(nextStationId)
+                if (nextStationIndex < 0) continue
+
+                // Calculate progress between previous station and next station
+                val pathIndex: Int
+                val progress: Double
+
+                if (nextStationIndex == 0) {
+                    // It's approaching its very first station (probably just starting)
+                    pathIndex = 0
+                    progress = 0.0
+                } else {
+                    pathIndex = nextStationIndex - 1
+                    // Normally progress = 1.0 (at next station) if time is 0.
+                    // If time is segmentSeconds, progress = 0.0 (at prev station).
+                    val rawProgress = 1.0 - (secondsToNextStation.toDouble() / segmentSeconds)
+                    progress = max(0.0, min(1.0, rawProgress))
+                }
+
+                // If it's a terminal station and time is <= 10s, anchor it exactly to the station
+                val isTerminal = nextStationIndex == orderedStops.size - 1 || nextStationIndex == 0
+                val finalProgress = if (isTerminal && secondsToNextStation <= 10) 1.0 else progress
+
+                val prevStationId = orderedStops[max(0, pathIndex)]
+                val actualNextStationId = orderedStops[min(orderedStops.size - 1, pathIndex + 1)]
+
                 val prevCoord = stationCoords[prevStationId] ?: continue
-                val nextCoord = stationCoords[nextStationId] ?: continue
-                
-                val trainLat = prevCoord.lat + (nextCoord.lat - prevCoord.lat) * progress
-                val trainLon = prevCoord.lon + (nextCoord.lon - prevCoord.lon) * progress
-                
-                // Calculate bearing for the arrow icon
+                val nextCoord = stationCoords[actualNextStationId] ?: continue
+
+                val trainLat = prevCoord.lat + (nextCoord.lat - prevCoord.lat) * finalProgress
+                val trainLon = prevCoord.lon + (nextCoord.lon - prevCoord.lon) * finalProgress
+
                 val bearing = calculateBearing(prevCoord.lat, prevCoord.lon, nextCoord.lat, nextCoord.lon)
-                
-                // Approximate time to next station
-                val secondsToNext = ((1.0 - progress) * segmentSeconds).toInt()
-                
-                finalTrains.add(
-                    TrainPosition(
-                        id = "Train-${trainIdCounter++}",
-                        lat = trainLat,
-                        lon = trainLon,
-                        line = lineName,
-                        destination = destination,
-                        nextStationName = nextCoord.name,
-                        secondsToNextStation = max(0, secondsToNext),
-                        bearing = bearing
-                    )
+
+                val trainPos = TrainPosition(
+                    id = trainId,
+                    lat = trainLat,
+                    lon = trainLon,
+                    line = lineName,
+                    destination = destination,
+                    destinationId = destinationId,
+                    nextStationName = stationCoords[nextStationId]?.name ?: nextStationId,
+                    nextStationId = nextStationId,
+                    secondsToNextStation = secondsToNextStation,
+                    bearing = bearing,
+                    isGhost = false
                 )
+                
+                // If it's a terminal and secondsToNextStation == 0, we don't add it (it arrived and should be removed)
+                // Wait, user request: "continua a colocar a setinha do metro nessa estação até chegar aos 00 segundos e depois retira"
+                // So if it's strictly 0, we can omit it, or if it's <= 0. Let's omit if <= 0 and terminal.
+                if (isTerminal && secondsToNextStation <= 0) {
+                    // Remove from tracking completely
+                    continue
+                }
+
+                newPositionsMap[trainId] = trainPos
             }
         }
 
-        finalTrains
+        // Handle Ghost Trains and State Updates
+        stateMutex.withLock {
+            val finalTrains = mutableListOf<TrainPosition>()
+
+            // 1. Add all newly fetched valid trains
+            for ((trainId, train) in newPositionsMap) {
+                finalTrains.add(train)
+                lastKnownPositions[trainId] = train
+                ghostTimestamps.remove(trainId) // It's alive, not a ghost
+            }
+
+            // 2. Check for missing trains from last known positions
+            val iterator = lastKnownPositions.iterator()
+            while (iterator.hasNext()) {
+                val entry = iterator.next()
+                val oldTrainId = entry.key
+                val oldTrain = entry.value
+
+                if (!newPositionsMap.containsKey(oldTrainId)) {
+                    // It's missing. Is it a valid destination to be a ghost?
+                    if (validDestinations.contains(oldTrain.destinationId)) {
+                        
+                        // It's a ghost. Have we tracked it already?
+                        val ghostSince = ghostTimestamps[oldTrainId]
+                        if (ghostSince == null) {
+                            ghostTimestamps[oldTrainId] = currentTime
+                            val ghostTrain = oldTrain.copy(isGhost = true)
+                            // Update last known to ghost version
+                            entry.setValue(ghostTrain)
+                            finalTrains.add(ghostTrain)
+                        } else {
+                            // Check TTL (2 minutes = 120,000 ms)
+                            if (currentTime - ghostSince > 120_000) {
+                                // TTL expired, remove it
+                                iterator.remove()
+                                ghostTimestamps.remove(oldTrainId)
+                            } else {
+                                // Still a valid ghost
+                                finalTrains.add(oldTrain.copy(isGhost = true))
+                            }
+                        }
+                    } else {
+                        // Not a valid destination, remove it permanently
+                        iterator.remove()
+                    }
+                }
+            }
+
+            finalTrains
+        }
     }
 
     private fun calculateBearing(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        if (lat1 == lat2 && lon1 == lon2) return 0.0
         val dLon = Math.toRadians(lon2 - lon1)
         val l1 = Math.toRadians(lat1)
         val l2 = Math.toRadians(lat2)
@@ -163,27 +228,4 @@ class TrainPositionEngine(private val context: Context) {
         val x = Math.cos(l1) * Math.sin(l2) - Math.sin(l1) * Math.cos(l2) * Math.cos(dLon)
         return (Math.toDegrees(Math.atan2(y, x)) + 360.0) % 360.0
     }
-
-    private fun resolveLineFromStation(
-        station: Station,
-        destination: String
-    ): Pair<String, List<String>>? {
-        val lineNames = station.line.split(" ").map { it.trim() }
-        for (lineName in lineNames) {
-            val orderedStops = lineStationOrder[lineName] ?: continue
-            if (orderedStops.contains(station.apiId)) {
-                return Pair(lineName, orderedStops)
-            }
-        }
-        return null
-    }
-    
-    private data class RawPrediction(
-        val lineName: String,
-        val destination: String,
-        val orderedStops: List<String>,
-        val stationIndexInRoute: Int,
-        val secondsToStation: Int,
-        val absoluteTime: Double
-    )
 }
