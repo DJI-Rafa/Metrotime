@@ -13,3 +13,26 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# ── Firebase / Secrets (NUNCA publicar!) ──
+app/google-services.json
+**/google-services.json
+**/serviceAccountKey.json
+scripts/serviceAccountKey.json
+
+# ── Ficheiros temporários / scripts locais ──
+*.apk
+*.pb
+*.pyc
+scripts/
+fetch_scripts.py
+test.py
+test_api.py
+generate_doc.py
+vehicles.json
+cp_debug.png
+cp_site.html
+gtfs.pb
+find_trip.ps1
+list_apk.ps1
+rename_assets.ps1
