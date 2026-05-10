@@ -9,6 +9,9 @@
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:label="@string/app_name"
@@ -28,6 +31,16 @@
             android:name=".ui.LiveMapActivity"
             android:label="Live Map"
             android:theme="@style/Theme.Metrotime.App" />
+
+        <!-- CP Train Activities -->
+        <activity
+            android:name=".ui.CpStationActivity"
+            android:theme="@style/Theme.Metrotime.App"
+            android:parentActivityName=".ui.SettingsActivity" />
+        <activity
+            android:name=".ui.CpTripDetailActivity"
+            android:theme="@style/Theme.Metrotime.App"
+            android:parentActivityName=".ui.CpStationActivity" />
 
         <activity
             android:name=".ui.AuthActivity"
@@ -66,7 +79,7 @@
         <service
             android:name=".work.WidgetUpdateService"
             android:exported="false"
-            android:foregroundServiceType="dataSync"/>
+            android:foregroundServiceType="dataSync|location"/>
 
         <receiver
             android:name=".ui.ScreenOnReceiver"
@@ -77,10 +90,34 @@
             </intent-filter>
         </receiver>
 
+        <receiver
+            android:name=".work.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+            </intent-filter>
+        </receiver>
+
         <activity
             android:name=".ui.SettingsActivity"
             android:theme="@style/Theme.Metrotime.App"
             android:exported="true"/>
+
+        <activity
+            android:name=".ui.FriendsActivity"
+            android:theme="@style/Theme.Metrotime.App"
+            android:parentActivityName=".ui.SettingsActivity" />
+
+        <activity
+            android:name=".ui.FavoritesActivity"
+            android:theme="@style/Theme.Metrotime.App"
+            android:parentActivityName=".ui.SettingsActivity" />
+
+        <activity
+            android:name=".ui.StatsActivity"
+            android:theme="@style/Theme.Metrotime.App"
+            android:parentActivityName=".ui.SettingsActivity" />
 
     </application>
 </manifest>
