@@ -16,9 +16,8 @@ class MetroWidgetProvider : AppWidgetProvider() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == ACTION_CLEAR_AND_REFRESH) {
             // When the refresh button is clicked:
-            // 1. Stop any existing 5-second update loop.
-            WidgetTickService.stop(context)
-            // 2. Start a full, immediate update (location search + data fetch).
+            // Start a full, immediate update (location search + data fetch).
+            // The service naturally replaces its loop internally via coroutine cancellation.
             WidgetUpdateService.requestFetch(context)
         } else {
             super.onReceive(context, intent)

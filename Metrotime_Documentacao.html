@@ -1,0 +1,545 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Metrotime - Documentacao Completa</title><style>
+body{font-family:Segoe UI,sans-serif;max-width:900px;margin:40px auto;padding:20px;background:#fff;color:#222;line-height:1.7}
+h1{color:#1a1a2e;border-bottom:3px solid #2E86DE;padding-bottom:10px}
+h2{color:#2E86DE;margin-top:40px;border-bottom:1px solid #ddd;padding-bottom:5px}
+h3{color:#444}
+table{border-collapse:collapse;width:100%;margin:15px 0}
+th,td{border:1px solid #ddd;padding:10px;text-align:left}
+th{background:#2E86DE;color:white}
+tr:nth-child(even){background:#f8f9fa}
+code{background:#f0f0f0;padding:2px 6px;border-radius:3px;font-size:0.9em}
+pre{background:#1a1a2e;color:#e0e0e0;padding:20px;border-radius:8px;overflow-x:auto}
+blockquote{border-left:4px solid #2E86DE;margin:20px 0;padding:10px 20px;background:#f0f7ff}
+hr{border:none;border-top:2px solid #eee;margin:30px 0}
+@media print{body{margin:0;padding:10px}}
+</style></head><body><h1>📱 METROTIME — Documentação Completa da Aplicação</h1>
+<hr />
+<h2>1. Visão Geral</h2>
+<p><strong>Metrotime</strong> é uma aplicação nativa Android desenvolvida em <strong>Kotlin</strong> com <strong>Jetpack Compose</strong>, destinada a fornecer informações de transportes públicos em tempo real na área metropolitana de Lisboa. A app cobre <strong>Metro de Lisboa</strong>, <strong>Comboios CP</strong>, <strong>Autocarros Carris/Carris Metropolitana</strong> e <strong>Barcos (Transtejo/Soflusa)</strong>.</p>
+<table>
+<thead>
+<tr>
+<th>Aspeto</th>
+<th>Detalhe</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Linguagem</strong></td>
+<td>Kotlin</td>
+</tr>
+<tr>
+<td><strong>UI Framework</strong></td>
+<td>Jetpack Compose (Material 3)</td>
+</tr>
+<tr>
+<td><strong>Arquitetura</strong></td>
+<td>MVVM + Repository Pattern</td>
+</tr>
+<tr>
+<td><strong>Backend</strong></td>
+<td>Firebase Auth, Firebase Realtime Database</td>
+</tr>
+<tr>
+<td><strong>APIs Externas</strong></td>
+<td>Metro de Lisboa API, Comboios.live API</td>
+</tr>
+<tr>
+<td><strong>Dados Offline</strong></td>
+<td>GTFS estáticos (CP, Carris, Transtejo)</td>
+</tr>
+<tr>
+<td><strong>Mapa</strong></td>
+<td>MapLibre GL (open-source)</td>
+</tr>
+<tr>
+<td><strong>Min SDK</strong></td>
+<td>Android 8.0 (API 26)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>2. Sistema de Autenticação</h2>
+<h3>2.1 Ecrã de Login (<code>LoginScreen.kt</code>)</h3>
+<ul>
+<li>Login por <strong>email/password</strong> via Firebase Authentication.</li>
+<li>Login com <strong>Google Sign-In</strong> (OAuth 2.0) com botão estilizado.</li>
+<li>Navegação para registo e recuperação de palavra-passe.</li>
+<li>Design premium com gradiente escuro e logo da Metrotime.</li>
+</ul>
+<h3>2.2 Ecrã de Registo (<code>RegisterScreen.kt</code>)</h3>
+<ul>
+<li>Criação de conta com nome, email e palavra-passe.</li>
+<li>O nome do utilizador é guardado na Firebase Realtime Database em <code>/users/{uid}/name</code>.</li>
+</ul>
+<h3>2.3 Recuperação de Password (<code>ForgotPasswordScreen.kt</code>, <code>ResetPasswordScreen.kt</code>)</h3>
+<ul>
+<li>Envio de email de reset via Firebase.</li>
+</ul>
+<h3>2.4 Splash Screen (<code>SplashScreen.kt</code>)</h3>
+<ul>
+<li>Ecrã de carregamento de 750ms com animação antes de redirecionar para o ecrã principal.</li>
+</ul>
+<hr />
+<h2>3. Ecrã Principal (<code>SettingsActivity.kt</code>)</h2>
+<p>O ecrã principal é o hub central da app e divide-se em duas áreas:</p>
+<h3>3.1 Barra Superior</h3>
+<ul>
+<li><strong>Avatar do utilizador</strong> (foto de perfil carregável do dispositivo, guardada em Base64 na Firebase).</li>
+<li><strong>Menu dropdown</strong>: Mudar foto / Logout.</li>
+<li><strong>Botão Amigos</strong> (ícone de pessoa) → abre <code>FriendsActivity</code>.</li>
+<li><strong>Botão Definições</strong> (ícone de engrenagem) → abre o painel de definições e administração.</li>
+</ul>
+<h3>3.2 Toggle Metro / Comboio</h3>
+<p>Barra de alternância animada entre os dois modos de transporte.</p>
+<h3>3.3 Tab Metro (<code>MetroTabContent</code>)</h3>
+<ul>
+<li><strong>4 botões de linha</strong>: Azul, Amarela, Verde e Vermelha (cada um com a cor oficial).</li>
+<li>Ao clicar, abre a lista de estações dessa linha (<code>LineStationsActivity</code>).</li>
+<li><strong>2 botões de ação no fundo</strong>:</li>
+<li><strong>Live Map</strong> → abre o mapa em tempo real (<code>LiveMapActivity</code>).</li>
+<li><strong>Favoritos</strong> → abre as estações favoritas (<code>FavoritesActivity</code>).</li>
+</ul>
+<h3>3.4 Tab Comboio (<code>ComboioTabContent</code>)</h3>
+<ul>
+<li><strong>Barra de pesquisa</strong> de estações CP.</li>
+<li><strong>Toggle Estações / Comboios em Circulação</strong>.</li>
+<li><strong>Lista de estações CP</strong> filtráveis (dados da API Comboios.live).</li>
+<li><strong>Lista de comboios ativos</strong> com badge colorido por tipo de serviço (AP, IC, IR, R, U, S).</li>
+<li>Ao clicar numa estação → <code>CpStationActivity</code>.</li>
+<li>Ao clicar num comboio → <code>CpTripDetailActivity</code>.</li>
+</ul>
+<hr />
+<h2>4. Metro de Lisboa — Funcionalidades</h2>
+<h3>4.1 Lista de Estações por Linha (<code>LineStationsActivity.kt</code>)</h3>
+<ul>
+<li>Apresenta todas as estações da linha selecionada, ordenadas.</li>
+<li>Cada estação é clicável e abre a vista de chegadas.</li>
+</ul>
+<h3>4.2 Chegadas em Tempo Real (<code>StationArrivalsActivity.kt</code>)</h3>
+<ul>
+<li><strong>Tempos de espera do Metro</strong> agrupados por destino, com contagem regressiva ao segundo (mm:ss).</li>
+<li><strong>Barra colorida lateral</strong> por linha (Azul, Amarela, Verde, Vermelha).</li>
+<li><strong>Botão de Favorito ⭐</strong> na TopAppBar para guardar a estação.</li>
+<li><strong>Autocarros próximos</strong> (&lt; 1km) via dados GTFS Carris, com badge amarelo do número da carreira, destino e ETA.</li>
+<li><strong>Barcos</strong> (apenas em Cais do Sodré e Terreiro do Paço): horários Transtejo/Soflusa com cores por operador.</li>
+<li>Toggle "Autocarros / Barcos" nas estações com ambos os modos.</li>
+</ul>
+<h3>4.3 Dados do Metro</h3>
+<ul>
+<li><strong>API em tempo real</strong>: <code>https://api.metrolisboa.pt/</code> para tempos de espera ao segundo.</li>
+<li><strong>Estações</strong>: Ficheiro JSON local com todas as estações, coordenadas GPS, linhas e API IDs.</li>
+</ul>
+<hr />
+<h2>5. Comboios CP — Funcionalidades</h2>
+<h3>5.1 Estação CP (<code>CpStationActivity.kt</code>)</h3>
+<ul>
+<li>Lista de comboios que param na estação selecionada.</li>
+<li><strong>Filtro por tipo de serviço</strong> (Todos / AP / IC / IR / R / U).</li>
+<li>Cada cartão mostra: número do comboio, origem → destino, tipo de serviço, atraso, estado.</li>
+<li><strong>Botão de Favorito ⭐</strong> na TopAppBar.</li>
+<li>Filtragem inteligente via <strong>Route Cache</strong> (GTFS) — a app sabe exatamente quais comboios param em cada estação.</li>
+</ul>
+<h3>5.2 Detalhe de Viagem (<code>CpTripDetailActivity.kt</code>)</h3>
+<ul>
+<li><strong>Timeline visual</strong> de todas as paragens do comboio.</li>
+<li>Paragens já passadas marcadas a <strong>vermelho</strong>.</li>
+<li>Paragem atual destacada.</li>
+<li>Paragens futuras a branco.</li>
+<li>Horários previstos de chegada/partida com atraso incorporado.</li>
+<li><strong>Indicador de progresso do comboio</strong> na timeline.</li>
+<li>Informações: número, serviço, velocidade, operador, atraso acumulado.</li>
+</ul>
+<h3>5.3 Motor de Rotas e Cache (<code>CpRouteRepository.kt</code>)</h3>
+<ul>
+<li><strong>Cache inteligente em memória</strong> de todas as rotas dos comboios.</li>
+<li>Utiliza dados <strong>GTFS estáticos</strong> (ficheiro <code>stop_times.txt</code> com ~300k linhas) para resolver rotas completas.</li>
+<li><strong>Lazy Loading</strong>: Carrega apenas as rotas dos comboios ativos.</li>
+<li><strong>Background Warmup</strong>: O serviço em background aquece o cache a cada 5 minutos, mesmo sem a app aberta.</li>
+<li><strong>Fallback automático</strong>: Se a API falhar, usa dados GTFS offline.</li>
+</ul>
+<h3>5.4 GTFS Estáticos (<code>CpGtfsRepository.kt</code>)</h3>
+<ul>
+<li>Ficheiros GTFS oficiais da CP embebidos na app (<code>assets/</code>).</li>
+<li>Mapeamento de <code>trip_id</code> → lista ordenada de paragens com horários.</li>
+<li>Utilizado para reconstruir rotas quando a API Comboios.live restringe detalhes.</li>
+</ul>
+<hr />
+<h2>6. Mapa ao Vivo (<code>LiveMapActivity.kt</code> + <code>LiveMapViewModel.kt</code>)</h2>
+<h3>6.1 Mapa Interativo</h3>
+<ul>
+<li>Motor de renderização: <strong>MapLibre GL</strong> (open-source, baseado em Mapbox).</li>
+<li><strong>Estilo escuro</strong> personalizado.</li>
+<li><strong>Linhas do Metro</strong> desenhadas como LineLayer com as cores oficiais.</li>
+<li><strong>Estações</strong> representadas como pontos brancos com contorno cinza.</li>
+<li><strong>Comboios em movimento</strong>: Setas brancas direcionais com rotação baseada no bearing.</li>
+<li><strong>Comboios fantasma</strong> (sem sinal GPS): Setas semi-transparentes com posição estimada.</li>
+</ul>
+<h3>6.2 Motor de Posicionamento (<code>TrainPositionEngine.kt</code>)</h3>
+<ul>
+<li>Calcula a posição em tempo real de cada composição do Metro entre duas estações.</li>
+<li>Interpolação linear baseada no tempo restante até à próxima estação.</li>
+<li>Cálculo de bearing (ângulo de direção) para orientar as setas no mapa.</li>
+<li>Escala dinâmica das setas conforme o nível de zoom.</li>
+</ul>
+<h3>6.3 Info Sheets</h3>
+<ul>
+<li><strong>Toque num comboio</strong>: Abre bottom sheet com linha, destino, próxima estação, tempo restante, ID.</li>
+<li><strong>Toque numa estação</strong>: Abre bottom sheet com próximas chegadas em tempo real.</li>
+</ul>
+<h3>6.4 Localização de Amigos no Mapa</h3>
+<ul>
+<li>Amigos com partilha ativa aparecem como <strong>círculos azuis</strong> com a inicial do nome ou <strong>foto de perfil</strong> recortada em círculo.</li>
+<li>Atualização contínua via Firebase Realtime Database.</li>
+</ul>
+<h3>6.5 Localização do Utilizador</h3>
+<ul>
+<li>Indicador azul pulsante com a posição GPS do utilizador.</li>
+<li>Permissão de localização em primeiro plano.</li>
+</ul>
+<hr />
+<h2>7. Sistema de Amigos (<code>FriendsActivity.kt</code>)</h2>
+<h3>7.1 Funcionalidades</h3>
+<ul>
+<li><strong>Adicionar amigos</strong> por código UID.</li>
+<li><strong>Lista de amigos</strong> com nome, foto de perfil e estado.</li>
+<li><strong>Pedidos de amizade</strong> pendentes (enviar/aceitar/rejeitar).</li>
+<li>Dados sincronizados via Firebase Realtime Database em <code>/friendships/</code>.</li>
+</ul>
+<hr />
+<h2>8. Sistema de Favoritos (<code>FavoritesActivity.kt</code>)</h2>
+<h3>8.1 Interface</h3>
+<ul>
+<li><strong>Duas tabs</strong>: "Metro" e "Comboio" com toggle animado.</li>
+<li><strong>Estado vazio</strong>: Logo do Metro de Lisboa ou CP com mensagem instrutiva.</li>
+</ul>
+<h3>8.2 Metro Favorites</h3>
+<ul>
+<li>Lista de estações de metro favoritas com barra colorida por linha.</li>
+<li>Toque para abrir a estação.</li>
+<li><strong>Swipe to Remove</strong>: Arrastar para a esquerda revela fundo vermelho "Remover".</li>
+</ul>
+<h3>8.3 CP Favorites</h3>
+<ul>
+<li>Lista de estações CP favoritas com logo da CP.</li>
+<li>Mesmo comportamento de swipe-to-remove e toque para abrir.</li>
+</ul>
+<h3>8.4 Persistência</h3>
+<ul>
+<li>Guardado localmente via <code>SharedPreferences</code> (sobrevive a reinstalações se backup estiver ativo).</li>
+</ul>
+<hr />
+<h2>9. Widgets para Ecrã Inicial e Ecrã de Bloqueio</h2>
+<h3>9.1 Widget Principal (<code>MetroWidgetProvider</code>, <code>widget_metro.xml</code>)</h3>
+<ul>
+<li>Widget para o ecrã inicial com design escuro semi-transparente (glassmorphism).</li>
+<li>Mostra a <strong>estação mais próxima</strong> e os <strong>3 próximos comboios</strong> por destino com tempos ao segundo.</li>
+<li>Toque para atualizar manualmente.</li>
+<li>Atualização automática a cada segundo via <code>WidgetUpdateService</code>.</li>
+</ul>
+<h3>9.2 Widget de Ecrã de Bloqueio (<code>LockWidgetProvider</code>, <code>widget_lock.xml</code>)</h3>
+<ul>
+<li>Widget compacto para o lock screen (compatível com ONE UI).</li>
+<li>Mostra estação + 3 próximas chegadas.</li>
+<li>Estilo frosted glass.</li>
+</ul>
+<h3>9.3 Notificação Persistente no Lock Screen</h3>
+<ul>
+<li>Notificação custom com layout colapsado e expandido.</li>
+<li>Layout <strong>colapsado</strong>: Estação + próximo comboio + tempo.</li>
+<li>Layout <strong>expandido</strong>: Estação + 3 próximos comboios.</li>
+<li>Visibilidade pública (visível sem desbloquear).</li>
+<li>Ícone de notificação: silhueta de comboio em branco (<code>ic_stat_metro</code>).</li>
+</ul>
+<hr />
+<h2>10. Serviço em Background (<code>WidgetUpdateService.kt</code>)</h2>
+<h3>10.1 Foreground Service</h3>
+<ul>
+<li>Serviço persistente que mantém a app viva em background.</li>
+<li>Tipo: <code>dataSync</code> + <code>location</code>.</li>
+<li>Retorno <code>START_STICKY</code> (o Android reinicia-o se o sistema o matar).</li>
+</ul>
+<h3>10.2 Loop Principal (tick a cada 1 segundo)</h3>
+<table>
+<thead>
+<tr>
+<th>Intervalo</th>
+<th>Ação</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>1 segundo</strong></td>
+<td>Atualiza widgets, lock widget e notificação</td>
+</tr>
+<tr>
+<td><strong>15 segundos</strong></td>
+<td>Re-fetch dados do Metro via API</td>
+</tr>
+<tr>
+<td><strong>60 segundos</strong></td>
+<td>Partilha localização GPS na Firebase</td>
+</tr>
+<tr>
+<td><strong>60 segundos</strong></td>
+<td>Verifica se o utilizador está num comboio CP</td>
+</tr>
+<tr>
+<td><strong>60 segundos</strong></td>
+<td>Verifica estado dos amigos em comboios</td>
+</tr>
+<tr>
+<td><strong>60 segundos</strong></td>
+<td>Verifica mensagens admin na Firebase</td>
+</tr>
+<tr>
+<td><strong>5 minutos</strong></td>
+<td>Aquece o cache GTFS de rotas CP</td>
+</tr>
+</tbody>
+</table>
+<h3>10.3 Deteção Automática de Comboio CP</h3>
+<ul>
+<li>Compara a localização GPS do utilizador com as posições dos comboios da API Comboios.live.</li>
+<li>Se o utilizador estiver a &lt; 200m de um comboio, inicia tracking.</li>
+<li>Após 3 verificações consecutivas a mover-se com o mesmo comboio → <strong>confirmação</strong>.</li>
+<li>Publica <code>currentTrain</code> e <code>trainDestination</code> na Firebase.</li>
+<li>Os amigos são notificados automaticamente com mensagem personalizada (ex: "O João está a viajar no IC 523 para o Porto!").</li>
+</ul>
+<h3>10.4 Notificações de Amigos em Comboios</h3>
+<ul>
+<li>Lê o campo <code>currentTrain</code> dos amigos na Firebase.</li>
+<li>Envia notificação local com o <strong>logo da CP</strong> como ícone grande.</li>
+<li>Mensagens personalizáveis com templates variados para evitar repetição.</li>
+<li>Deduplicação: cada viagem só notifica uma vez.</li>
+</ul>
+<h3>10.5 Boot Receiver (<code>BootReceiver.kt</code>)</h3>
+<ul>
+<li>Escuta <code>BOOT_COMPLETED</code> e <code>MY_PACKAGE_REPLACED</code>.</li>
+<li>Reinicia automaticamente o <code>WidgetUpdateService</code> após reboot ou atualização da app.</li>
+<li><strong>Os widgets nunca param</strong>, mesmo após desligar e ligar o telemóvel.</li>
+</ul>
+<hr />
+<h2>11. Painel de Administração</h2>
+<h3>11.1 Acesso</h3>
+<ul>
+<li>Protegido por palavra-passe hardcoded.</li>
+<li>Acessível via Definições → "Área Reservada (Equipa)".</li>
+</ul>
+<h3>11.2 Funcionalidades</h3>
+<ul>
+<li><strong>Cache de Rotas</strong>: Visualização de todas as rotas memorizadas com origem → destino.</li>
+<li><strong>Privacidade</strong>: Toggle de partilha de localização em background.</li>
+</ul>
+<h3>11.3 Push Notifications Remotas</h3>
+<ul>
+<li><strong>Seleção de destinatários</strong>: Chips clicáveis com todos os utilizadores registados.</li>
+<li><strong>Botão "Todos"</strong>: Envia para toda a base de utilizadores.</li>
+<li><strong>Campo de mensagem</strong>: Texto livre para a notificação.</li>
+<li><strong>Mecanismo</strong>: Escreve na Firebase em <code>/adminMessages/{uid}</code>. O serviço em background de cada utilizador deteta a mensagem, mostra a notificação e apaga-a da BD.</li>
+<li><strong>Canal de alta prioridade</strong>: Garante entrega imediata (<code>admin_alerts</code>).</li>
+</ul>
+<hr />
+<h2>12. Autocarros Carris (<code>GtfsRadarService.kt</code>)</h2>
+<h3>12.1 Funcionamento</h3>
+<ul>
+<li>Utiliza dados GTFS estáticos da Carris/Carris Metropolitana.</li>
+<li><strong>Radar de proximidade</strong>: Identifica paragens de autocarro num raio de 1km da estação de metro selecionada.</li>
+<li>Calcula ETA baseado nos horários programados do GTFS.</li>
+<li>Apresenta: número da carreira, destino, paragem e tempo estimado.</li>
+</ul>
+<hr />
+<h2>13. Barcos Transtejo/Soflusa (<code>BoatScheduleRepo.kt</code>)</h2>
+<h3>13.1 Funcionamento</h3>
+<ul>
+<li>Dados GTFS estáticos das empresas Transtejo e Soflusa.</li>
+<li>Disponível em Cais do Sodré e Terreiro do Paço.</li>
+<li>Mostra próximas partidas com: destino, horário, ETA em minutos, operador.</li>
+<li>Cores por operador: Transtejo (laranja), Soflusa (vermelho).</li>
+</ul>
+<hr />
+<h2>14. Dados e APIs</h2>
+<table>
+<thead>
+<tr>
+<th>Fonte</th>
+<th>Tipo</th>
+<th>Utilização</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Metro de Lisboa API</td>
+<td>REST em tempo real</td>
+<td>Tempos de espera ao segundo</td>
+</tr>
+<tr>
+<td>Comboios.live API</td>
+<td>REST em tempo real</td>
+<td>Posição, estado e atraso dos comboios CP</td>
+</tr>
+<tr>
+<td>GTFS CP</td>
+<td>Estático (assets)</td>
+<td>Rotas completas, horários, paragens</td>
+</tr>
+<tr>
+<td>GTFS Carris</td>
+<td>Estático (assets)</td>
+<td>Horários e rotas de autocarros</td>
+</tr>
+<tr>
+<td>GTFS Transtejo/Soflusa</td>
+<td>Estático (assets)</td>
+<td>Horários dos barcos</td>
+</tr>
+<tr>
+<td>Firebase Auth</td>
+<td>Cloud</td>
+<td>Autenticação de utilizadores</td>
+</tr>
+<tr>
+<td>Firebase Realtime DB</td>
+<td>Cloud</td>
+<td>Localização, amigos, mensagens admin, perfis</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>15. Recursos Visuais</h2>
+<table>
+<thead>
+<tr>
+<th>Recurso</th>
+<th>Ficheiro</th>
+<th>Utilização</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Logo Metrotime</td>
+<td><code>metro_logo.png</code></td>
+<td>Splash, favoritos, branding</td>
+</tr>
+<tr>
+<td>Logo CP</td>
+<td><code>cp_logo.png</code></td>
+<td>Favoritos CP, notificações de comboios</td>
+</tr>
+<tr>
+<td>Ícone de notificação</td>
+<td><code>ic_stat_metro.xml</code></td>
+<td>Barra de estado (silhueta branca)</td>
+</tr>
+<tr>
+<td>Ícone Google</td>
+<td><code>ic_google.xml</code></td>
+<td>Botão de login Google</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>16. Estrutura do Projeto</h2>
+<pre><code>metrotime/
+├── data/
+│   ├── boat/          # Horários de barcos (GTFS)
+│   ├── bus/           # Radar de autocarros (GTFS)
+│   ├── cp/            # API CP, modelos, cache de rotas, GTFS
+│   ├── ApiModels.kt   # Modelos da API do Metro
+│   ├── MapConfiguration.kt  # Coordenadas de estações para o mapa
+│   ├── StationsRepo.kt      # Repositório de estações do Metro
+│   └── TrainPositionEngine.kt  # Motor de posicionamento em tempo real
+├── location/
+│   └── Locator.kt     # Obtenção de localização GPS
+├── prefs/
+│   └── Prefs.kt       # SharedPreferences (favoritos, estação fixa, etc.)
+├── ui/
+│   ├── AuthActivity.kt          # Ponto de entrada de autenticação
+│   ├── SettingsActivity.kt      # Ecrã principal (hub)
+│   ├── LiveMapActivity.kt       # Mapa ao vivo com MapLibre
+│   ├── LiveMapViewModel.kt      # ViewModel do mapa
+│   ├── StationArrivalsActivity.kt  # Chegadas de metro + bus + barcos
+│   ├── CpStationActivity.kt     # Chegadas de comboios CP
+│   ├── CpTripDetailActivity.kt  # Detalhe de viagem CP (timeline)
+│   ├── FavoritesActivity.kt     # Estações favoritas
+│   ├── FriendsActivity.kt       # Gestão de amigos
+│   ├── LineStationsActivity.kt  # Lista de estações por linha
+│   ├── MetroWidgetProvider.kt   # Widget ecrã inicial
+│   ├── LockWidgetProvider.kt    # Widget ecrã de bloqueio
+│   └── ScreenOnReceiver.kt      # Atualização ao desbloquear
+├── work/
+│   ├── WidgetUpdateService.kt   # Serviço principal em background
+│   ├── BootReceiver.kt          # Auto-start após reboot
+│   └── WidgetUpdateWorker.kt    # Worker auxiliar
+└── res/
+    ├── drawable/       # Logos, ícones vetoriais
+    ├── layout/         # Layouts XML de widgets e notificações
+    └── xml/            # Configurações de widgets
+</code></pre>
+<hr />
+<h2>17. Permissões Android</h2>
+<table>
+<thead>
+<tr>
+<th>Permissão</th>
+<th>Razão</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>INTERNET</code></td>
+<td>APIs e Firebase</td>
+</tr>
+<tr>
+<td><code>ACCESS_FINE_LOCATION</code></td>
+<td>GPS preciso para mapa e proximidade</td>
+</tr>
+<tr>
+<td><code>ACCESS_COARSE_LOCATION</code></td>
+<td>Localização aproximada</td>
+</tr>
+<tr>
+<td><code>ACCESS_BACKGROUND_LOCATION</code></td>
+<td>Partilha de localização com app fechada</td>
+</tr>
+<tr>
+<td><code>FOREGROUND_SERVICE</code></td>
+<td>Serviço persistente para widgets</td>
+</tr>
+<tr>
+<td><code>FOREGROUND_SERVICE_DATA_SYNC</code></td>
+<td>Sincronização de dados</td>
+</tr>
+<tr>
+<td><code>FOREGROUND_SERVICE_LOCATION</code></td>
+<td>GPS em background</td>
+</tr>
+<tr>
+<td><code>POST_NOTIFICATIONS</code></td>
+<td>Notificações de amigos e admin</td>
+</tr>
+<tr>
+<td><code>RECEIVE_BOOT_COMPLETED</code></td>
+<td>Reinício automático após reboot</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>18. Design e UX</h2>
+<ul>
+<li><strong>Tema escuro</strong> consistente em toda a aplicação (<code>DarkBackground</code>, <code>CardBackground</code>).</li>
+<li><strong>Cores oficiais</strong>: Azul (#2E86DE), Amarela (#F7DC6F), Verde (#27AE60), Vermelha (#E74C3C).</li>
+<li><strong>Tipografia</strong>: Material 3 com pesos variados (Bold, SemiBold, Medium).</li>
+<li><strong>Animações</strong>: Transições suaves nos toggles, cores animadas, efeitos de seleção.</li>
+<li><strong>Glassmorphism</strong>: Widgets com fundo semi-transparente e blur.</li>
+<li><strong>Micro-interações</strong>: Swipe-to-remove nos favoritos, chips de seleção, contagem regressiva ao segundo.</li>
+<li><strong>Responsividade</strong>: Layouts adaptáveis com <code>LazyColumn</code>, <code>FlowRow</code> e <code>weight()</code>.</li>
+</ul>
+<hr />
+<blockquote>
+<p><strong>Versão do Documento</strong>: 1.0<br />
+<strong>Data</strong>: 9 de Maio de 2026<br />
+<strong>Autores</strong>: João Rafael &amp; Antigravity AI<br />
+<strong>Total de ficheiros Kotlin</strong>: ~40<br />
+<strong>Total de linhas de código estimado</strong>: ~15.000+</p>
+</blockquote></body></html>

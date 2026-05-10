@@ -11,9 +11,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.Icons.Filled
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
+import com.example.metrotime.ui.theme.VisibilityIcon
+import com.example.metrotime.ui.theme.VisibilityOffIcon
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -30,7 +29,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.example.metrotime.R // Make sure you have your drawables here
-import com.example.metrotime.data.UserPreferencesRepository
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.database.FirebaseDatabase
+import androidx.credentials.CredentialManager
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialException
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import kotlinx.coroutines.launch
 
 @Composable
@@ -39,7 +45,6 @@ fun LoginScreen(navController: NavController) {
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    val userPrefs = UserPreferencesRepository(context)
     val scope = rememberCoroutineScope()
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -89,14 +94,25 @@ fun LoginScreen(navController: NavController) {
                         modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 24.dp, top = 80.dp) // Top padding to clear logo
                     ) {
 
+                        val textFieldColors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFF00529B),
+                            unfocusedBorderColor = Color.Gray.copy(alpha = 0.5f),
+                            focusedTextColor = Color.Black,
+                            unfocusedTextColor = Color.Black,
+                            cursorColor = Color(0xFF00529B),
+                            focusedLabelColor = Color(0xFF00529B),
+                            unfocusedLabelColor = Color.Gray
+                        )
+
                         // 5. Input Fields
                         OutlinedTextField(
                             value = email,
                             onValueChange = { email = it },
                             label = { Text("Email") },
-                            leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                            leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, tint = Color.Gray) },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = textFieldColors
                         )
 
                         Spacer(modifier = Modifier.height(16.dp))
@@ -105,16 +121,17 @@ fun LoginScreen(navController: NavController) {
                             value = password,
                             onValueChange = { password = it },
                             label = { Text("Password") },
-                            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = Color.Gray) },
                             trailingIcon = {
-                                val image = if (passwordVisible) Filled.Visibility else Filled.VisibilityOff
+                                val image = if (passwordVisible) VisibilityIcon else VisibilityOffIcon
                                 IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                                    Icon(image, contentDescription = "Toggle password visibility")
+                                    Icon(image, contentDescription = "Toggle password visibility", tint = Color.Gray)
                                 }
                             },
                             visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = textFieldColors
                         )
 
                         Spacer(modifier = Modifier.height(24.dp))
@@ -122,15 +139,18 @@ fun LoginScreen(navController: NavController) {
                         // 6. Buttons and Texts
                         Button(
                             onClick = {
-                                scope.launch {
-                                    val storedPassword = userPrefs.getPasswordForEmail(email)
-                                    if (storedPassword != null && storedPassword == password) {
-                                        userPrefs.loginUser(email)
-                                        navController.navigate(Routes.HOME) { popUpTo(Routes.LOGIN) { inclusive = true } }
-                                    } else {
-                                        Toast.makeText(context, "Email or password invalid.", Toast.LENGTH_SHORT).show()
-                                    }
+                                if (email.isBlank() || password.isBlank()) {
+                                    Toast.makeText(context, "Por favor preencha todos os campos.", Toast.LENGTH_SHORT).show()
+                                    return@Button
                                 }
+                                FirebaseAuth.getInstance().signInWithEmailAndPassword(email.trim(), password)
+                                    .addOnCompleteListener { task ->
+                                        if (task.isSuccessful) {
+                                            navController.navigate(Routes.HOME) { popUpTo(Routes.LOGIN) { inclusive = true } }
+                                        } else {
+                                            Toast.makeText(context, "Login falhou: ${task.exception?.message}", Toast.LENGTH_LONG).show()
+                                        }
+                                    }
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -152,10 +172,84 @@ fun LoginScreen(navController: NavController) {
                         )
 
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
-                            Divider(modifier = Modifier.weight(1f), color = Color.Gray.copy(alpha = 0.5f))
-                            Text(" or ", color = Color.Gray.copy(alpha = 0.8f), modifier = Modifier.padding(horizontal = 8.dp))
-                            Divider(modifier = Modifier.weight(1f), color = Color.Gray.copy(alpha = 0.5f))
+                            HorizontalDivider(modifier = Modifier.weight(1f), color = Color.Gray.copy(alpha = 0.5f))
+                            Text(" ou ", color = Color.Gray.copy(alpha = 0.8f), modifier = Modifier.padding(horizontal = 8.dp))
+                            HorizontalDivider(modifier = Modifier.weight(1f), color = Color.Gray.copy(alpha = 0.5f))
                         }
+
+                        // Google Login Button
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    try {
+                                        val credentialManager = CredentialManager.create(context)
+                                        val googleIdOption = GetGoogleIdOption.Builder()
+                                            .setFilterByAuthorizedAccounts(false)
+                                            .setServerClientId("959630000425-itu10q9tdaoca7sfhnsufqqobniistds.apps.googleusercontent.com")
+                                            .setAutoSelectEnabled(true)
+                                            .build()
+
+                                        val request = GetCredentialRequest.Builder()
+                                            .addCredentialOption(googleIdOption)
+                                            .build()
+
+                                        val result = credentialManager.getCredential(context, request)
+                                        val credential = result.credential
+                                        
+                                        if (credential is androidx.credentials.CustomCredential &&
+                                            credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                                            
+                                            val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
+                                            val firebaseCredential = GoogleAuthProvider.getCredential(googleIdTokenCredential.idToken, null)
+                                            
+                                            FirebaseAuth.getInstance().signInWithCredential(firebaseCredential)
+                                                .addOnCompleteListener { task ->
+                                                    if (task.isSuccessful) {
+                                                        val user = task.result?.user
+                                                        if (user != null) {
+                                                            // Save profile data to database
+                                                            val db = FirebaseDatabase.getInstance("https://metrotime-569ec-default-rtdb.europe-west1.firebasedatabase.app")
+                                                            val updates = mutableMapOf<String, Any>(
+                                                                "email" to (user.email ?: ""),
+                                                                "name" to (user.displayName ?: "Utilizador Google")
+                                                            )
+                                                            user.photoUrl?.let { updates["photoUrl"] = it.toString().replace("s96-c", "s400-c") } // Higher res image
+                                                            
+                                                            db.getReference("users").child(user.uid).updateChildren(updates)
+                                                                .addOnCompleteListener { 
+                                                                    navController.navigate(Routes.HOME) { popUpTo(Routes.LOGIN) { inclusive = true } }
+                                                                }
+                                                        }
+                                                    } else {
+                                                        Toast.makeText(context, "Erro: ${task.exception?.message}", Toast.LENGTH_LONG).show()
+                                                    }
+                                                }
+                                        }
+                                    } catch (e: GetCredentialException) {
+                                        Toast.makeText(context, "Erro Auth: ${e.type} - ${e.errorMessage}", Toast.LENGTH_LONG).show()
+                                    } catch (e: Exception) {
+                                        Toast.makeText(context, "Erro: ${e.message}", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(56.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            border = BorderStroke(1.dp, Color.Gray.copy(alpha = 0.3f))
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                                Image(
+                                    painter = painterResource(id = R.drawable.ic_google),
+                                    contentDescription = "Google Logo",
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Continuar com o Google", color = Color(0xFF00529B), fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
 
                         OutlinedButton(
                             onClick = { navController.navigate(Routes.REGISTER) },
@@ -165,7 +259,7 @@ fun LoginScreen(navController: NavController) {
                             shape = RoundedCornerShape(16.dp),
                             border = BorderStroke(1.dp, Color.Gray.copy(alpha = 0.3f))
                         ) {
-                            Text("Sign up", color = Color(0xFF00529B))
+                            Text("Criar nova conta", color = Color.Gray)
                         }
                     }
                 }

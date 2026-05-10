@@ -1068,10 +1068,7 @@ fun AppSettingsDialog(activity: ComponentActivity, onDismiss: () -> Unit) {
                             Spacer(modifier = Modifier.height(8.dp))
                             OutlinedTextField(
                                 value = passInput,
-                                onValueChange = { 
-                                    passInput = it
-                                    if (it == "DJI2026") isAdminUnlocked = true
-                                },
+                                onValueChange = { passInput = it },
                                 placeholder = { Text("Palavra-passe Admin") },
                                 modifier = Modifier.fillMaxWidth(),
                                 singleLine = true,
@@ -1080,6 +1077,24 @@ fun AppSettingsDialog(activity: ComponentActivity, onDismiss: () -> Unit) {
                                     unfocusedTextColor = Color.White
                                 )
                             )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Button(
+                                onClick = {
+                                    val db = com.google.firebase.database.FirebaseDatabase.getInstance("https://metrotime-569ec-default-rtdb.europe-west1.firebasedatabase.app")
+                                    db.getReference("admin_password").get().addOnSuccessListener { snap ->
+                                        val correctPass = snap.getValue(String::class.java) ?: ""
+                                        if (passInput == correctPass) {
+                                            isAdminUnlocked = true
+                                        } else {
+                                            android.widget.Toast.makeText(activity, "Password incorreta!", android.widget.Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3B82F6))
+                            ) {
+                                Text("Entrar", color = Color.White, fontWeight = FontWeight.Bold)
+                            }
                         } else {
                             var adminMessage by remember { mutableStateOf("") }
                             

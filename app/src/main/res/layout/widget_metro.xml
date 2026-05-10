@@ -1,66 +1,125 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
+    android:layout_height="match_parent"
+    android:background="@drawable/bg_widget_dark"
     android:orientation="vertical"
-    android:padding="12dp"
-    android:background="@android:color/black"
-    android:alpha="0.95">
+    android:padding="16dp">
 
-    <TextView
-        android:id="@+id/txtTitle"
+    <!-- Top Header Frame: Title centered, refresh button right -->
+    <RelativeLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Metro de Lisboa"
-        android:gravity="center"
-        android:textSize="16sp"
-        android:textStyle="bold"
-        android:textColor="@android:color/white"/>
+        android:layout_height="wrap_content">
+        
+        <TextView
+            android:id="@+id/txtTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_centerInParent="true"
+            android:text="Metro de Lisboa"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:textStyle="bold" />
 
+        <ImageView
+            android:id="@+id/btnRefresh"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_alignParentEnd="true"
+            android:layout_centerVertical="true"
+            android:src="@android:drawable/ic_popup_sync"
+            android:tint="#FFFFFF" />
+    </RelativeLayout>
+
+    <!-- Station Name -->
     <TextView
         android:id="@+id/txtStation"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:layout_marginBottom="10dp"
         android:gravity="center"
         android:text="Estação"
-        android:textSize="14sp"
-        android:textColor="@android:color/white"/>
+        android:textSize="18sp"
+        android:textStyle="bold" />
 
-    <TextView
-        android:id="@+id/txtArrival1"
+    <!-- Destination 1 -->
+    <LinearLayout
+        android:id="@+id/rowDest1"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text=""
-        android:textSize="14sp"
-        android:textColor="@android:color/white"/>
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingTop="4dp"
+        android:paddingBottom="4dp">
 
-    <TextView
-        android:id="@+id/txtArrival2"
+        <TextView
+            android:id="@+id/txtDest1"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textColor="#FFFFFF"
+            android:textSize="15sp"
+            android:maxLines="1"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="end">
+            <TextView android:id="@+id/txtTime1_1" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="#FFFFFF" android:textSize="14sp" android:layout_marginStart="8dp" />
+            <TextView android:id="@+id/txtTime1_2" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="#FFFFFF" android:textSize="14sp" android:layout_marginStart="8dp" />
+            <TextView android:id="@+id/txtTime1_3" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="#99FFFFFF" android:textSize="12sp" android:layout_marginStart="8dp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginTop="2dp"
+        android:layout_marginBottom="2dp"
+        android:background="#1AFFFFFF" />
+
+    <!-- Destination 2 -->
+    <LinearLayout
+        android:id="@+id/rowDest2"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text=""
-        android:textSize="14sp"
-        android:textColor="@android:color/white"/>
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingTop="4dp"
+        android:paddingBottom="4dp">
 
-    <TextView
-        android:id="@+id/txtArrival3"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text=""
-        android:textSize="14sp"
-        android:textColor="@android:color/white"/>
+        <TextView
+            android:id="@+id/txtDest2"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textColor="#FFFFFF"
+            android:textSize="15sp"
+            android:maxLines="1"
+            android:textStyle="bold" />
 
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="end">
+            <TextView android:id="@+id/txtTime2_1" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="#FFFFFF" android:textSize="14sp" android:layout_marginStart="8dp" />
+            <TextView android:id="@+id/txtTime2_2" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="#FFFFFF" android:textSize="14sp" android:layout_marginStart="8dp" />
+            <TextView android:id="@+id/txtTime2_3" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="#99FFFFFF" android:textSize="12sp" android:layout_marginStart="8dp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Footer: Updated Time -->
     <TextView
         android:id="@+id/txtUpdated"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Atualizado há 0 s"
-        android:textSize="12sp"
-        android:textColor="@android:color/darker_gray"/>
-
-    <Button
-        android:id="@+id/btnRefresh"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Atualizar"/>
+        android:layout_marginTop="8dp"
+        android:gravity="end"
+        android:textColor="#99FFFFFF"
+        android:textSize="11sp" />
+        
 </LinearLayout>

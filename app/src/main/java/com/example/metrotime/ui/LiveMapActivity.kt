@@ -6,6 +6,7 @@ import android.view.Gravity
 import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
@@ -17,7 +18,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -63,8 +63,21 @@ class LiveMapActivity : ComponentActivity() {
     private var mapLibreMap: MapLibreMap? = null
     private var styleReady = false
 
+    private val requestPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        if (isGranted) {
+            viewModel.startLocationTracking()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // Start background service to ensure notifications and location sharing work without widgets
+        com.example.metrotime.work.WidgetUpdateService.requestFetch(this)
+
+        requestPermissionLauncher.launch(android.Manifest.permission.ACCESS_FINE_LOCATION)
 
         // 1. Init MapLibre (must be first)
         MapLibre.getInstance(this)
@@ -131,9 +144,18 @@ class LiveMapActivity : ComponentActivity() {
         // 4. Observe trains and update map markers
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.trains.collect { trains ->
-                    if (styleReady) {
-                        mapLibreMap?.let { updateTrainMarkers(it, trains) }
+                launch {
+                    viewModel.trains.collect { trains ->
+                        if (styleReady) {
+                            mapLibreMap?.let { updateTrainMarkers(it, trains) }
+                        }
+                    }
+                }
+                launch {
+                    viewModel.friendLocations.collect { friends ->
+                        if (styleReady) {
+                            mapLibreMap?.let { updateFriendMarkers(this@LiveMapActivity, it, friends) }
+                        }
                     }
                 }
             }
@@ -161,8 +183,8 @@ class LiveMapActivity : ComponentActivity() {
     }
 
     override fun onStart()    { super.onStart();    mapView.onStart() }
-    override fun onResume()   { super.onResume();   mapView.onResume() }
-    override fun onPause()    { super.onPause();    mapView.onPause() }
+    override fun onResume()   { super.onResume();   mapView.onResume(); viewModel.startLocationTracking() }
+    override fun onPause()    { super.onPause();    mapView.onPause(); viewModel.stopLocationTracking() }
     override fun onStop()     { super.onStop();     mapView.onStop() }
     override fun onLowMemory(){ super.onLowMemory();mapView.onLowMemory() }
     override fun onDestroy()  { super.onDestroy();  mapView.onDestroy() }
@@ -308,7 +330,7 @@ private fun StationInfoSheet(stationState: LiveMapViewModel.SelectedStationState
                     else       -> Color.Gray
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 12.dp)) {
-                    Icon(Icons.Default.Circle, contentDescription = null, tint = lineColor, modifier = Modifier.size(12.dp))
+                    Icon(CircleIcon, contentDescription = null, tint = lineColor, modifier = Modifier.size(12.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Linha $line", color = lineColor, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 }
@@ -320,6 +342,18 @@ private fun StationInfoSheet(stationState: LiveMapViewModel.SelectedStationState
                 Spacer(Modifier.height(16.dp))
             } else {
                 val arrivals = stationState.arrivals?.arrivals?.filter { it.line == selectedTab || selectedTab.isEmpty() } ?: emptyList()
+                val isEstimated = stationState.arrivals?.isEstimated ?: false
+                
+                if (isEstimated) {
+                    Text(
+                        "⚠️ Tempos estimados (API indisponível)",
+                        color = Color(0xFFF59E0B),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                }
+
                 if (arrivals.isEmpty()) {
                     Text("Não há comboios previstos para esta linha.", color = Color.LightGray, fontSize = 14.sp)
                 } else {
@@ -407,7 +441,7 @@ private fun TrainInfoSheet(train: TrainPosition, onDismiss: () -> Unit) {
             Text(topTitle, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Circle, contentDescription = null, tint = lineColor, modifier = Modifier.size(14.dp))
+                Icon(CircleIcon, contentDescription = null, tint = lineColor, modifier = Modifier.size(14.dp))
                 Spacer(Modifier.width(6.dp))
                 Text("Linha: ${train.line}", color = lineColor, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
             }
@@ -480,6 +514,37 @@ private fun createArrowBitmap(color: Int, isGhost: Boolean = false): Bitmap {
         }
         canvas.drawText("?", size / 2f, size * 0.6f, textPaint)
     }
+
+    return bitmap
+}
+
+private fun createFriendBitmap(initial: String): Bitmap {
+    val size = 70
+    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = AndroidColor.parseColor("#3B82F6") // Blue circle
+        style = Paint.Style.FILL
+    }
+    canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
+
+    val border = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = AndroidColor.WHITE
+        style = Paint.Style.STROKE
+        strokeWidth = 4f
+    }
+    canvas.drawCircle(size / 2f, size / 2f, (size / 2f) - 2f, border)
+
+    val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = AndroidColor.WHITE
+        textSize = 36f
+        typeface = android.graphics.Typeface.DEFAULT_BOLD
+        textAlign = Paint.Align.CENTER
+    }
+    
+    val yPos = (size / 2f) - ((textPaint.descent() + textPaint.ascent()) / 2)
+    canvas.drawText(initial, size / 2f, yPos, textPaint)
 
     return bitmap
 }
@@ -580,6 +645,24 @@ private fun setupMapLayers(style: Style) {
             )
         }
     }
+
+    // ── Friends layer ─────────────────────────────────────────────────────────
+    if (style.getSource("friends-src") == null) {
+        style.addSource(GeoJsonSource("friends-src", empty))
+        style.addLayer(
+            SymbolLayer("friends-layer", "friends-src").withProperties(
+                iconImage(get("imageId")),
+                iconAllowOverlap(true),
+                iconIgnorePlacement(true),
+                textAllowOverlap(true),
+                textIgnorePlacement(true),
+                symbolAvoidEdges(false),
+                iconSize(1.0f),
+                iconRotationAlignment(org.maplibre.android.style.layers.Property.ICON_ROTATION_ALIGNMENT_VIEWPORT),
+                iconPitchAlignment(org.maplibre.android.style.layers.Property.ICON_PITCH_ALIGNMENT_VIEWPORT)
+            )
+        )
+    }
 }
 
 private fun updateTrainMarkers(map: MapLibreMap, trains: List<TrainPosition>) {
@@ -616,4 +699,102 @@ private fun updateTrainMarkers(map: MapLibreMap, trains: List<TrainPosition>) {
 
         source.setGeoJson(collection)
     }
+}
+
+private fun updateFriendMarkers(context: android.content.Context, map: MapLibreMap, friends: List<LiveMapViewModel.FriendLocation>) {
+    val style = map.style ?: return
+    val source = style.getSourceAs<GeoJsonSource>("friends-src") ?: return
+
+    val features = JSONArray()
+    for (friend in friends) {
+        val imageId = if (friend.photoBase64 != null) "b64_${friend.uid}" else friend.photoUrl ?: friend.initial
+        
+        // Ensure image exists in style
+        if (style.getImage(imageId) == null) {
+            if (friend.photoBase64 != null) {
+                try {
+                    val bytes = android.util.Base64.decode(friend.photoBase64, android.util.Base64.DEFAULT)
+                    val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    if (bmp != null) {
+                        // Apply circle crop and border manually
+                        val bordered = Bitmap.createBitmap(74, 74, Bitmap.Config.ARGB_8888)
+                        val canvas = Canvas(bordered)
+                        val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = AndroidColor.WHITE
+                            setStyle(Paint.Style.STROKE)
+                            strokeWidth = 4f
+                        }
+                        
+                        // Circle mask
+                        val maskPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+                        val circleBmp = Bitmap.createBitmap(70, 70, Bitmap.Config.ARGB_8888)
+                        val circleCanvas = Canvas(circleBmp)
+                        circleCanvas.drawCircle(35f, 35f, 35f, maskPaint)
+                        maskPaint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN)
+                        circleCanvas.drawBitmap(Bitmap.createScaledBitmap(bmp, 70, 70, true), 0f, 0f, maskPaint)
+                        
+                        canvas.drawBitmap(circleBmp, 2f, 2f, null)
+                        canvas.drawCircle(37f, 37f, 35f, borderPaint)
+                        
+                        style.addImage(imageId, bordered)
+                    } else {
+                        style.addImage(imageId, createFriendBitmap(friend.initial))
+                    }
+                } catch (e: Exception) {
+                    style.addImage(imageId, createFriendBitmap(friend.initial))
+                }
+            } else if (friend.photoUrl != null) {
+                // Temporary fallback while loading
+                style.addImage(imageId, createFriendBitmap(friend.initial))
+                
+                // Load image async
+                val loader = coil.ImageLoader(context)
+                val req = coil.request.ImageRequest.Builder(context)
+                    .data(friend.photoUrl)
+                    .transformations(coil.transform.CircleCropTransformation())
+                    .size(70)
+                    .target { drawable ->
+                        val bmp = (drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+                        if (bmp != null) {
+                            val bordered = Bitmap.createBitmap(74, 74, Bitmap.Config.ARGB_8888)
+                            val canvas = Canvas(bordered)
+                            val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                                color = AndroidColor.WHITE
+                                setStyle(Paint.Style.STROKE)
+                                strokeWidth = 4f
+                            }
+                            canvas.drawBitmap(Bitmap.createScaledBitmap(bmp, 70, 70, true), 2f, 2f, null)
+                            canvas.drawCircle(37f, 37f, 35f, borderPaint)
+                            
+                            style.addImage(imageId, bordered)
+                            // The layer will automatically use the new image since the ID is the same
+                        }
+                    }
+                    .build()
+                loader.enqueue(req)
+            } else {
+                style.addImage(imageId, createFriendBitmap(friend.initial))
+            }
+        }
+
+        features.put(
+            JSONObject()
+                .put("type", "Feature")
+                .put("geometry", JSONObject()
+                    .put("type", "Point")
+                    .put("coordinates", JSONArray().put(friend.lon).put(friend.lat)))
+                .put("properties", JSONObject()
+                    .put("uid", friend.uid)
+                    .put("name", friend.name)
+                    .put("imageId", imageId)
+                    .put("timestamp", friend.timestamp))
+        )
+    }
+
+    val collection = JSONObject()
+        .put("type", "FeatureCollection")
+        .put("features", features)
+        .toString()
+
+    source.setGeoJson(collection)
 }

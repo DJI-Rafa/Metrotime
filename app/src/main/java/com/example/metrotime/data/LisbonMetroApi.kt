@@ -123,7 +123,53 @@ class RemoteArrivalsSource(private val context: Context) : ArrivalsSource {
         val station = StationsRepo.loadStations(context).find { it.apiId == stationId } 
             ?: Station(stationId, stationId, 0.0, 0.0, "", stationId) // Fallback
 
+        // If API returned no arrivals, generate estimated arrivals every 4 minutes
+        if (stationSpecificArrivals.isEmpty()) {
+            val estimatedArrivals = generateEstimatedArrivals(station)
+            if (estimatedArrivals.isNotEmpty()) {
+                return StationArrivals(station, estimatedArrivals, System.currentTimeMillis(), isEstimated = true)
+            }
+        }
+
         return StationArrivals(station, stationSpecificArrivals, System.currentTimeMillis())
+    }
+
+    /**
+     * Generate estimated arrivals at 4-minute intervals for both directions
+     * of each line the station belongs to. Used as fallback when the API is down.
+     */
+    private fun generateEstimatedArrivals(station: Station): List<Arrival> {
+        val estimated = mutableListOf<Arrival>()
+        val stationLines = station.line.split(" ").filter { it.isNotBlank() }
+
+        for (lineName in stationLines) {
+            val stationOrder = MapConfiguration.LINE_STATION_ORDER[lineName] ?: continue
+            val stationCoordId = MapConfiguration.STATION_COORDS.values
+                .find { it.name.equals(station.name, ignoreCase = true) }?.id ?: continue
+
+            if (!stationOrder.contains(stationCoordId)) continue
+
+            // Get the two terminal names for this line
+            val firstTerminal = MapConfiguration.STATION_COORDS[stationOrder.first()]?.name ?: continue
+            val lastTerminal = MapConfiguration.STATION_COORDS[stationOrder.last()]?.name ?: continue
+
+            // Don't generate arrivals toward the terminal this station IS
+            val destinations = mutableListOf<Pair<String, String>>() // name to lineName
+            if (!station.name.equals(lastTerminal, ignoreCase = true)) {
+                destinations.add(lastTerminal to lineName)
+            }
+            if (!station.name.equals(firstTerminal, ignoreCase = true)) {
+                destinations.add(firstTerminal to lineName)
+            }
+
+            for ((destName, line) in destinations) {
+                // Generate 3 arrivals at ~4 min intervals (240 seconds)
+                estimated.add(Arrival(destName, 240, line))
+                estimated.add(Arrival(destName, 480, line))
+                estimated.add(Arrival(destName, 720, line))
+            }
+        }
+        return estimated
     }
 
     override suspend fun fetchLineArrivals(linha: String): LineArrivals {

@@ -15,5 +15,12 @@ val LineAmarela = Color(0xFFFFD500)
 val LineVerde = Color(0xFF009E60)
 val LineVermelha = Color(0xFFED1C24)
 
+// CP Train service colors
+val CpAlfaPendular = Color(0xFFCC0000)
+val CpIntercidades = Color(0xFF0055A4)
+val CpInterRegional = Color(0xFF008B45)
+val CpRegional = Color(0xFFFF8C00)
+val CpUrbano = Color(0xFF607D8B)
+
 val DarkBackground = Color(0xFF1E1F22)
 val CardBackground = Color(0xFF2B2D30)

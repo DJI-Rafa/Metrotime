@@ -11,8 +11,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.navigation.NavController
 import com.example.metrotime.data.UserPreferencesRepository
 import com.example.metrotime.ui.theme.AppBackgrounds
+import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
 
 @Composable
 fun SplashScreen(navController: NavController) {
@@ -22,8 +22,8 @@ fun SplashScreen(navController: NavController) {
     LaunchedEffect(key1 = true) {
         delay(750) // Minimum splash screen time
 
-        val userEmail = userPrefs.loggedInUserEmail.first()
-        val destination = if (userEmail != null) Routes.HOME else Routes.LOGIN
+        val currentUser = FirebaseAuth.getInstance().currentUser
+        val destination = if (currentUser != null) Routes.HOME else Routes.LOGIN
 
         navController.navigate(destination) {
             popUpTo(Routes.SPLASH) { inclusive = true }

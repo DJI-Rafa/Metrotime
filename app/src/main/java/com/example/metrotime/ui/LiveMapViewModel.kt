@@ -11,6 +11,17 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Looper
+import androidx.core.app.ActivityCompat
+import com.google.android.gms.location.*
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
+import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.database.ValueEventListener
+
 import com.example.metrotime.data.RemoteArrivalsSource
 import com.example.metrotime.data.StationArrivals
 
@@ -32,8 +43,28 @@ class LiveMapViewModel(application: Application) : AndroidViewModel(application)
     private val _isLoading = MutableStateFlow(true)
     val isLoading: StateFlow<Boolean> = _isLoading
 
+    private val fusedLocationClient = LocationServices.getFusedLocationProviderClient(application)
+    private var locationCallback: LocationCallback? = null
+
+    data class FriendLocation(
+        val uid: String,
+        val lat: Double,
+        val lon: Double,
+        val timestamp: Long,
+        val name: String,
+        val initial: String,
+        val photoUrl: String?,
+        val photoBase64: String?
+    )
+    private val _friendLocations = MutableStateFlow<List<FriendLocation>>(emptyList())
+    val friendLocations: StateFlow<List<FriendLocation>> = _friendLocations
+
+    private var friendsListener: ValueEventListener? = null
+    private val locationListeners = mutableMapOf<String, ValueEventListener>()
+
     init {
         startPolling()
+        startFriendsTracking()
     }
 
     private fun startPolling() {
@@ -120,6 +151,125 @@ class LiveMapViewModel(application: Application) : AndroidViewModel(application)
                     _selectedStation.value = _selectedStation.value?.copy(loading = false)
                 }
             }
+        }
+    }
+
+    fun startLocationTracking() {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        
+        if (ActivityCompat.checkSelfPermission(getApplication(), Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            return
+        }
+
+        if (locationCallback != null) return // Already tracking
+
+        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5000L).build()
+        locationCallback = object : LocationCallback() {
+            override fun onLocationResult(result: LocationResult) {
+                result.lastLocation?.let { loc ->
+                    val db = FirebaseDatabase.getInstance("https://metrotime-569ec-default-rtdb.europe-west1.firebasedatabase.app")
+                    val map = mapOf(
+                        "lat" to loc.latitude,
+                        "lon" to loc.longitude,
+                        "timestamp" to System.currentTimeMillis()
+                    )
+                    db.getReference("locations").child(uid).setValue(map)
+                }
+            }
+        }
+
+        fusedLocationClient.requestLocationUpdates(request, locationCallback!!, Looper.getMainLooper())
+    }
+
+    fun stopLocationTracking() {
+        locationCallback?.let {
+            fusedLocationClient.removeLocationUpdates(it)
+            locationCallback = null
+        }
+    }
+
+    private fun startFriendsTracking() {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        val db = FirebaseDatabase.getInstance("https://metrotime-569ec-default-rtdb.europe-west1.firebasedatabase.app")
+        
+        friendsListener = db.getReference("friends").child(uid).addValueEventListener(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val acceptedFriends = mutableListOf<String>()
+                for (child in snapshot.children) {
+                    if (child.getValue(String::class.java) == "accepted") {
+                        child.key?.let { acceptedFriends.add(it) }
+                    }
+                }
+                updateLocationListeners(acceptedFriends)
+            }
+            override fun onCancelled(error: DatabaseError) {}
+        })
+    }
+
+    private fun updateLocationListeners(friendUids: List<String>) {
+        val db = FirebaseDatabase.getInstance("https://metrotime-569ec-default-rtdb.europe-west1.firebasedatabase.app")
+        
+        // Remove old listeners
+        val toRemove = locationListeners.keys - friendUids.toSet()
+        for (uid in toRemove) {
+            val listener = locationListeners.remove(uid)
+            if (listener != null) db.getReference("locations").child(uid).removeEventListener(listener)
+            _friendLocations.value = _friendLocations.value.filter { it.uid != uid }
+        }
+
+        // Add new listeners
+        for (uid in friendUids) {
+            if (!locationListeners.containsKey(uid)) {
+                // Need a temp listener so we don't request again while waiting
+                locationListeners[uid] = object : ValueEventListener {
+                    override fun onDataChange(snapshot: DataSnapshot) {}
+                    override fun onCancelled(error: DatabaseError) {}
+                }
+                
+                db.getReference("users").child(uid).get().addOnSuccessListener { userSnap ->
+                    val name = userSnap.child("name").getValue(String::class.java) ?: "Amigo"
+                    val photoUrl = userSnap.child("photoUrl").getValue(String::class.java)
+                    val photoBase64 = userSnap.child("photoBase64").getValue(String::class.java)
+                    val initial = name.take(1).uppercase()
+                    
+                    val listener = object : ValueEventListener {
+                        override fun onDataChange(locSnap: DataSnapshot) {
+                            val lat = locSnap.child("lat").getValue(Double::class.java)
+                            val lon = locSnap.child("lon").getValue(Double::class.java)
+                            val ts = locSnap.child("timestamp").getValue(Long::class.java) ?: 0L
+                            
+                            if (lat != null && lon != null) {
+                                val friendLoc = FriendLocation(uid, lat, lon, ts, name, initial, photoUrl, photoBase64)
+                                val current = _friendLocations.value.toMutableList()
+                                val index = current.indexOfFirst { it.uid == uid }
+                                if (index != -1) {
+                                    current[index] = friendLoc
+                                } else {
+                                    current.add(friendLoc)
+                                }
+                                _friendLocations.value = current
+                            } else {
+                                _friendLocations.value = _friendLocations.value.filter { it.uid != uid }
+                            }
+                        }
+                        override fun onCancelled(error: DatabaseError) {}
+                    }
+                    
+                    // Replace temp listener
+                    db.getReference("locations").child(uid).removeEventListener(locationListeners[uid]!!)
+                    db.getReference("locations").child(uid).addValueEventListener(listener)
+                    locationListeners[uid] = listener
+                }
+            }
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        val db = FirebaseDatabase.getInstance("https://metrotime-569ec-default-rtdb.europe-west1.firebasedatabase.app")
+        friendsListener?.let { db.getReference("friends").child(FirebaseAuth.getInstance().currentUser?.uid ?: "").removeEventListener(it) }
+        for ((uid, listener) in locationListeners) {
+            db.getReference("locations").child(uid).removeEventListener(listener)
         }
     }
 }

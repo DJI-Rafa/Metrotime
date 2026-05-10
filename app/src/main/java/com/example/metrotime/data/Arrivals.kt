@@ -4,7 +4,8 @@ package com.example.metrotime.data
 data class StationArrivals(
     val station: Station,
     val arrivals: List<Arrival>,
-    val fetchedAtMillis: Long
+    val fetchedAtMillis: Long,
+    val isEstimated: Boolean = false
 )
 
 // Simplified, clean data class for a single arrival

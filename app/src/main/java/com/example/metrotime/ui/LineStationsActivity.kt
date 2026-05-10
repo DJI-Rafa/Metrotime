@@ -14,7 +14,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.outlined.Train
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -146,7 +145,7 @@ fun StationCard(station: Station, currentLineName: String, onClick: () -> Unit) 
             Spacer(modifier = Modifier.width(12.dp))
             
             Icon(
-                imageVector = Icons.Outlined.Train,
+                imageVector = TrainIcon,
                 contentDescription = "Train",
                 tint = Color.White,
                 modifier = Modifier.size(24.dp)
