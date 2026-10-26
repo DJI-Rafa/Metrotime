@@ -1,3 +1,7 @@
 <resources>
     <string name="app_name">Metrotime</string>
+    <string name="widget_metro_description">Próximos metros da estação mais perto</string>
+    <string name="widget_lock_description">Próximos metros, para o ecrã de bloqueio</string>
+    <string name="widget_cp_description">Próximas partidas de uma estação CP</string>
+    <string name="widget_bus_description">Próximos autocarros de uma paragem</string>
 </resources>

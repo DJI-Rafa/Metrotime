@@ -395,11 +395,8 @@ fun CpFavoritesTab(activity: ComponentActivity) {
                                             fontSize = 16.sp,
                                             fontWeight = FontWeight.SemiBold
                                         )
-                                        Text(
-                                            "Estação CP",
-                                            color = CpIntercidades,
-                                            fontSize = 13.sp
-                                        )
+                                        // Próximas partidas, sem ter de abrir a estação
+                                        CpNextDepartures(code)
                                     }
                                     Text(
                                         "›",
@@ -411,6 +408,50 @@ fun CpFavoritesTab(activity: ComponentActivity) {
                         }
                     }
                 )
+            }
+        }
+    }
+}
+
+/** As próximas 3 partidas de uma estação CP, atualizadas a cada minuto. */
+@Composable
+fun CpNextDepartures(stationCode: String) {
+    var lines by remember(stationCode) { mutableStateOf<List<Triple<String, String, Color>>?>(null) }
+    LaunchedEffect(stationCode) {
+        while (true) {
+            val now = com.example.metrotime.data.cp.CpTime.now()
+            val stops = runCatching { com.example.metrotime.data.cp.CpRepository.getTimetableWindow(stationCode, now).stops }.getOrNull()
+            if (stops != null) {
+                lines = stops.mapNotNull { timed ->
+                    val at = timed.dateTimeOf(timed.stop.departureTime) ?: return@mapNotNull null
+                    if (!com.example.metrotime.data.cp.CpTimetableWindow.isInWindow(at.toLocalDate(), at.toLocalTime(), timed.stop.delay, now)) return@mapNotNull null
+                    timed to at
+                }.sortedBy { it.second }.take(3).map { (timed, at) ->
+                    val stop = timed.stop
+                    val delay = stop.delay ?: 0
+                    val (status, color) = when {
+                        stop.supression != null || delay == -1 -> "suprimido" to Color(0xFFFF5252)
+                        delay >= 2 -> "+$delay" to (if (delay > 5) Color(0xFFFF5252) else Color(0xFFFFC107))
+                        else -> "" to Color.LightGray
+                    }
+                    Triple(
+                        "${at.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))}  ${com.example.metrotime.data.cp.CpService.shortName(stop.trainService?.code)}",
+                        com.example.metrotime.data.cp.formatStationName(stop.trainDestination?.designation ?: "?") + if (status.isNotEmpty()) "  $status" else "",
+                        color
+                    )
+                }
+            }
+            kotlinx.coroutines.delay(60_000)
+        }
+    }
+    val list = lines
+    when {
+        list == null -> Text("A carregar partidas…", color = Color.Gray, fontSize = 12.sp)
+        list.isEmpty() -> Text("Sem partidas nas próximas 5 h", color = Color.Gray, fontSize = 12.sp)
+        else -> list.forEach { (time, dest, color) ->
+            Row {
+                Text(time, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(72.dp))
+                Text(dest, color = color, fontSize = 12.sp, maxLines = 1)
             }
         }
     }

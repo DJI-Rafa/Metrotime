@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    O servidor da API do Metro (api.metrolisboa.pt:8243) só envia o certificado final, sem o
+    intermédio da Sectigo, e o Android não o vai buscar sozinho. Em vez de desligar a verificação
+    TLS (como estava), a app inclui esse intermédio como âncora de confiança apenas para este domínio.
+    O nome do servidor continua a ser verificado normalmente.
+    Intermédio: "Sectigo Public Server Authentication CA OV R36", válido até 2036-03-21,
+    SHA-256 65:42:D1:76:BE:D5:0F:19:3C:0C:E2:97:AE:44:EC:D8:A0:A8:6B:EC:2E:DE:68:27:69:34:40:59:B4:E7:85:30
+-->
+<network-security-config>
+    <domain-config>
+        <domain includeSubdomains="false">api.metrolisboa.pt</domain>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="@raw/sectigo_ov_r36" />
+        </trust-anchors>
+    </domain-config>
+</network-security-config>

@@ -4,6 +4,8 @@ import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
 import android.content.Context
 import android.content.Intent
+import com.example.metrotime.data.ArrivalsRepo
+import com.example.metrotime.work.MetroWidgetViews
 import com.example.metrotime.work.WidgetTickService
 import com.example.metrotime.work.WidgetUpdateService
 
@@ -37,7 +39,9 @@ class MetroWidgetProvider : AppWidgetProvider() {
     }
 
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
-        // On a standard system update, just request a simple redraw without fetching new data.
+        // Desenha já com o que houver: o Android não deixa arrancar o serviço daqui (fica em segundo
+        // plano) e o widget ficava vazio até se tocar em atualizar
+        appWidgetManager.updateAppWidget(appWidgetIds, MetroWidgetViews.home(context, ArrivalsRepo.currentArrivals.value))
         WidgetUpdateService.requestRedraw(context)
     }
 }

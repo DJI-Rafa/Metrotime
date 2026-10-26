@@ -24,8 +24,30 @@ data class TrainPosition(
     val nextStationId: String,
     val secondsToNextStation: Int,
     val bearing: Double,
-    val isGhost: Boolean = false
-)
+    val isGhost: Boolean = false,
+    // Fields for local smooth interpolation
+    val prevLat: Double = lat,
+    val prevLon: Double = lon,
+    val nextLat: Double = lat,
+    val nextLon: Double = lon,
+    val isTerminal: Boolean = false
+) {
+    fun updatePositionForSeconds(newSeconds: Int): TrainPosition {
+        val segmentSeconds = com.example.metrotime.data.MapConfiguration.SEGMENT_TRAVEL_SECONDS.toDouble()
+        val rawProgress = 1.0 - (newSeconds.toDouble() / segmentSeconds)
+        val progress = kotlin.math.max(0.0, kotlin.math.min(1.0, rawProgress))
+        val finalProgress = if (isTerminal && newSeconds <= 10) 1.0 else progress
+        
+        val newLat = prevLat + (nextLat - prevLat) * finalProgress
+        val newLon = prevLon + (nextLon - prevLon) * finalProgress
+        
+        return this.copy(
+            secondsToNextStation = newSeconds,
+            lat = newLat,
+            lon = newLon
+        )
+    }
+}
 
 /**
  * Fetches arrivals from line endpoints and infers train positions
@@ -152,7 +174,12 @@ class TrainPositionEngine(private val context: Context) {
                     nextStationId = nextStationId,
                     secondsToNextStation = secondsToNextStation,
                     bearing = bearing,
-                    isGhost = false
+                    isGhost = false,
+                    prevLat = prevCoord.lat,
+                    prevLon = prevCoord.lon,
+                    nextLat = nextCoord.lat,
+                    nextLon = nextCoord.lon,
+                    isTerminal = isTerminal
                 )
                 
                 // If it's a terminal and secondsToNextStation == 0, we don't add it (it arrived and should be removed)

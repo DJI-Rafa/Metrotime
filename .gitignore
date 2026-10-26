@@ -24,7 +24,8 @@ scripts/serviceAccountKey.json
 *.apk
 *.pb
 *.pyc
-scripts/
+scripts/serviceAccountKey.json
+.backup-cp-*/
 fetch_scripts.py
 test.py
 test_api.py
@@ -36,3 +37,11 @@ gtfs.pb
 find_trip.ps1
 list_apk.ps1
 rename_assets.ps1
+
+# ── Gerados / dados de depuração (podem conter chaves de API) ──
+functions/node_modules/
+*.har
+tmp_*.json
+.firebase/
+firebase-debug.log
+database-debug.log

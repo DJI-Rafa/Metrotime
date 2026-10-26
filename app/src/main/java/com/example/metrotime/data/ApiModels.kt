@@ -9,6 +9,11 @@ data class MetroLisboaArrivalResponse(
     @Json(name = "resposta") val arrivals: List<ApiPlatformArrival>?
 )
 
+/** estadoLinha/todos: {"resposta": {"verde": " Ok", "verde_curta": "normal", "tipo_msg_vd": "0", ...}}. */
+data class MetroLineStatusResponse(
+    @Json(name = "resposta") val status: Map<String, String?>?
+)
+
 /**
  * Represents the arrival times for a single platform of a station.
  * All fields are nullable to prevent crashes if the API response is inconsistent.

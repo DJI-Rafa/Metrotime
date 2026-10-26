@@ -13,6 +13,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,98 +28,110 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.metrotime.data.cp.*
 import com.example.metrotime.ui.theme.*
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 
-import java.util.Calendar
-import java.util.TimeZone
+/**
+ * Estado real do comboio quando a API devolve null ou NOT_STARTED apesar de já haver horas reais,
+ * atrasos ou paragens passadas. As horas vêm do CpTripClock (datas reais, atravessa a meia-noite).
+ */
+fun inferTripStatus(trip: CpTripDetail, moments: List<CpTripClock.StopMoment>, now: java.time.LocalDateTime): String {
+    val apiStatus = trip.status
+    if (apiStatus != null && apiStatus != VehicleStatus.NOT_STARTED) return apiStatus
+    val stops = trip.trainStops ?: return apiStatus ?: VehicleStatus.NOT_STARTED
 
-fun addMinutesToTime(timeStr: String, delayMin: Int): String {
-    if (timeStr.isBlank() || delayMin == 0) return timeStr
-    try {
-        val parts = timeStr.split(":")
-        if (parts.size >= 2) {
-            val h = parts[0].toInt()
-            val m = parts[1].toInt()
-            val totalMins = h * 60 + m + delayMin
-            // Handle hours past midnight (e.g. 24, 25)
-            val newH = (totalMins / 60) % 24 
-            val newM = totalMins % 60
-            return String.format("%02d:%02d", newH, newM)
-        }
-    } catch (e: Exception) {}
-    return timeStr
+    val hasRealTimeData = stops.any { it.eta != null || it.etd != null }
+    val hasDelay = (trip.delay ?: 0) > 0 || stops.any { (it.delay ?: 0) > 0 }
+    val hasPassedStops = stops.any { it.passed == true }
+    if (!hasRealTimeData && !hasDelay && !hasPassedStops) return VehicleStatus.NOT_STARTED
+
+    val lastArrival = moments.lastOrNull()?.arrivalOrDeparture
+    if (lastArrival != null && now.isAfter(lastArrival)) return VehicleStatus.COMPLETED
+    return VehicleStatus.IN_TRANSIT
 }
 
-fun getNormalizedMinutes(timeStr: String?): Int? {
-    if (timeStr.isNullOrBlank()) return null
-    return try {
-        val parts = timeStr.split(":")
-        val h = parts[0].toInt()
-        val m = parts[1].toInt()
-        val mins = h * 60 + m
-        if (mins < 4 * 60) mins + 24 * 60 else mins
-    } catch (e: Exception) { null }
-}
-
-fun getEffectiveTime(stop: CpTrainStop, isDeparture: Boolean): Int? {
-    val arr = getNormalizedMinutes(stop.eta ?: stop.arrival)
-    val dep = getNormalizedMinutes(stop.etd ?: stop.departure)
-    return if (isDeparture) (dep ?: arr) else (arr ?: dep)
-}
-
+/**
+ * Posição do comboio em paragens (2.4 = 40 % entre a 3.ª e a 4.ª): junta a posição pelo relógio
+ * (horas reais) com a última estação reportada pela CP. Devolve também se o GPS da CP está atrasado.
+ */
 fun calculateTrainPosition(
     stops: List<CpTrainStop>,
     currentStopIndex: Int,
-    status: String?
-): Float {
-    if (stops.isEmpty() || currentStopIndex < 0 || currentStopIndex >= stops.size) return -1f
+    status: String?,
+    moments: List<CpTripClock.StopMoment>,
+    now: java.time.LocalDateTime
+): Pair<Float, Boolean> {
+    if (stops.isEmpty() || status == VehicleStatus.NOT_STARTED) return -1f to false
 
-    if (status == VehicleStatus.AT_STATION || status == VehicleStatus.AT_ORIGIN || status == VehicleStatus.COMPLETED) {
-        return currentStopIndex.toFloat()
+    val timePos = CpTripClock.progress(moments, now)
+
+    var apiPos = -1f
+    if (currentStopIndex in stops.indices) {
+        apiPos = when {
+            status == VehicleStatus.AT_STATION || status == VehicleStatus.AT_ORIGIN || status == VehicleStatus.COMPLETED -> currentStopIndex.toFloat()
+            currentStopIndex == stops.lastIndex -> currentStopIndex.toFloat()
+            else -> currentStopIndex + 0.1f // IN_TRANSIT
+        }
     }
 
-    if (currentStopIndex == stops.lastIndex) {
-        return currentStopIndex.toFloat()
-    }
-
-    // Transit between currentStopIndex and currentStopIndex + 1
-    val dep = getEffectiveTime(stops[currentStopIndex], isDeparture = true)
-    val arr = getEffectiveTime(stops[currentStopIndex + 1], isDeparture = false)
-
-    if (dep == null || arr == null || dep >= arr) {
-        return currentStopIndex + 0.5f
-    }
-
-    val cal = Calendar.getInstance(TimeZone.getTimeZone("Europe/Lisbon"))
-    val nowMinsRaw = cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE)
-    val nowMins = if (nowMinsRaw < 4 * 60) nowMinsRaw + 24 * 60 else nowMinsRaw
-
-    var progress = (nowMins - dep).toFloat() / (arr - dep).toFloat()
-    progress = progress.coerceIn(0.1f, 0.9f)
-    
-    return currentStopIndex + progress
+    if (apiPos < 0f) return timePos to false
+    if (timePos < 0f) return apiPos to false
+    // A CP diz que já vai mais à frente do que o relógio: confia na CP
+    if (apiPos > timePos) return apiPos to false
+    // O relógio vai à frente: o GPS da CP está atrasado se já devia estar a meio do troço seguinte
+    return timePos to (timePos >= currentStopIndex + 0.5f)
 }
 
 class CpTripDetailActivity : ComponentActivity() {
 
     companion object {
         private const val EXTRA_TRAIN_NUMBER = "train_number"
+        private const val EXTRA_RUN_DATE = "run_date"
+        private const val EXTRA_FROM = "from_code"
+        private const val EXTRA_TO = "to_code"
+        private const val EXTRA_STATION = "station_code"
+        private const val EXTRA_STATION_ARRIVAL = "station_arrival"
 
-        fun newIntent(context: Context, trainNumber: Int): Intent {
+        /**
+         * [fromCode]/[toCode]: estações onde vais entrar/sair (viagem A → B), destacadas no percurso.
+         * [stationCode]: estação de cujo quadro de partidas/chegadas vieste — só se marca no percurso,
+         * não quer dizer que entras ou sais lá.
+         */
+        fun newIntent(
+            context: Context,
+            trainNumber: Int,
+            runDate: String? = null,
+            fromCode: String? = null,
+            toCode: String? = null,
+            stationCode: String? = null,
+            stationIsArrival: Boolean = false
+        ): Intent {
             return Intent(context, CpTripDetailActivity::class.java).apply {
                 putExtra(EXTRA_TRAIN_NUMBER, trainNumber)
+                if (runDate != null) putExtra(EXTRA_RUN_DATE, runDate)
+                if (fromCode != null) putExtra(EXTRA_FROM, fromCode)
+                if (toCode != null) putExtra(EXTRA_TO, toCode)
+                if (stationCode != null) {
+                    putExtra(EXTRA_STATION, stationCode)
+                    putExtra(EXTRA_STATION_ARRIVAL, stationIsArrival)
+                }
             }
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        CpGtfsRepository.initialize(applicationContext)
         val trainNumber = intent.getIntExtra(EXTRA_TRAIN_NUMBER, -1)
+        val runDate = intent.getStringExtra(EXTRA_RUN_DATE)
+        val fromCode = intent.getStringExtra(EXTRA_FROM)
+        val toCode = intent.getStringExtra(EXTRA_TO)
+        val stationCode = intent.getStringExtra(EXTRA_STATION)
+        val stationIsArrival = intent.getBooleanExtra(EXTRA_STATION_ARRIVAL, false)
         if (trainNumber == -1) { finish(); return }
 
         setContent {
@@ -126,143 +140,96 @@ class CpTripDetailActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = DarkBackground
                 ) {
-                    CpTripDetailScreen(this@CpTripDetailActivity, trainNumber)
+                    CpTripDetailScreen(this@CpTripDetailActivity, trainNumber, runDate, fromCode, toCode, stationCode, stationIsArrival)
                 }
             }
         }
     }
 }
 
+private val TRIP_HM = java.time.format.DateTimeFormatter.ofPattern("HH:mm")
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CpTripDetailScreen(activity: ComponentActivity, trainNumber: Int) {
+fun CpTripDetailScreen(
+    activity: ComponentActivity,
+    trainNumber: Int,
+    runDate: String?,
+    fromCode: String? = null,
+    toCode: String? = null,
+    stationCode: String? = null,
+    stationIsArrival: Boolean = false
+) {
     var trip by remember { mutableStateOf<CpTripDetail?>(null) }
+    var tripDate by remember { mutableStateOf<java.time.LocalDate?>(null) }
     var isLoading by remember { mutableStateOf(true) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
+    var isMaintenanceMode by remember { mutableStateOf(false) }
+    var now by remember { mutableStateOf(CpTime.now()) }
+    var showFollow by remember { mutableStateOf(false) }
+    var following by remember { mutableStateOf(com.example.metrotime.work.CpFollow.isFollowing(activity, trainNumber)) }
 
-    // Auto-refresh every 15 seconds
-    LaunchedEffect(trainNumber) {
-        // Wait for GTFS data to finish loading
-        CpGtfsRepository.awaitReady()
-
-        // Pre-load station names from the /stations endpoint
-        var stationsMap: Map<String, String> = emptyMap()
-        try {
-            val response = withContext(Dispatchers.IO) { CpApi.service.getStations() }
-            stationsMap = response.stations.associate { it.code to it.designation }
-        } catch (e: Exception) {
-            e.printStackTrace()
+    // Listener removido ao sair do ecrã
+    DisposableEffect(Unit) {
+        val ref = com.google.firebase.database.FirebaseDatabase.getInstance(CpRepository.FIREBASE_URL).getReference("maintenance_mode")
+        val listener = object : com.google.firebase.database.ValueEventListener {
+            override fun onDataChange(snapshot: com.google.firebase.database.DataSnapshot) {
+                isMaintenanceMode = (snapshot.value as? Boolean) ?: false
+            }
+            override fun onCancelled(error: com.google.firebase.database.DatabaseError) {}
         }
+        ref.addValueEventListener(listener)
+        onDispose { ref.removeEventListener(listener) }
+    }
 
-        while (isActive) {
-            try {
-                // ── Step 1: Get live vehicle data from /vehicles ──
-                val vehicle = withContext(Dispatchers.IO) {
-                    val resp = CpApi.service.getVehicles()
-                    resp.vehicles.firstOrNull { it.trainNumber == trainNumber }
-                }
-
-                if (vehicle == null) {
-                    if (trip == null) errorMsg = "Comboio $trainNumber não encontrado em circulação."
-                    isLoading = false
-                    delay(60_000)
-                    continue
-                }
-
-                // Vehicles API delay is in SECONDS → convert to minutes
-                val delaySec = vehicle.delay ?: 0
-                val delayMin = delaySec / 60
-
-                // Convert lastStation from API format (94-XXXXX) to GTFS format (94_XXXXX)
-                val lastStationGtfs = vehicle.lastStation?.replace("-", "_")
-
-                // ── Step 2: Get schedule from GTFS ──
-                val schedule = CpGtfsRepository.getTripSchedule(trainNumber, vehicle.gtfs?.tripId)
-
-                val trainStops: List<CpTrainStop> = if (schedule != null && schedule.isNotEmpty()) {
-                    // Find the index of lastStation in the schedule
-                    val lastStationIdx = if (lastStationGtfs != null) {
-                        schedule.indexOfFirst { it.id == lastStationGtfs }
-                    } else -1
-
-                    schedule.mapIndexed { idx, gtfsStop ->
-                        val designation = CpGtfsRepository.getStopDetails(gtfsStop.id)?.name
-                            ?: stationsMap[gtfsStop.id.replace("_", "-")]
-                            ?: "Estação ${gtfsStop.id}"
-
-                        val arrBase = gtfsStop.arr.take(5)
-                        val depBase = gtfsStop.dep.take(5)
-
-                        // Only apply delay to the current station and future stations
-                        // Past stations departed on time (or with whatever delay they had then)
-                        val isPast = lastStationIdx >= 0 && idx < lastStationIdx
-                        val effectiveDelay = if (isPast) 0 else delayMin
-                        val eta = addMinutesToTime(arrBase, effectiveDelay)
-                        val etd = addMinutesToTime(depBase, effectiveDelay)
-
-                        CpTrainStop(
-                            station = CpGenericEntity(code = gtfsStop.id, designation = designation),
-                            arrival = arrBase,
-                            departure = depBase,
-                            delay = effectiveDelay,
-                            eta = if (effectiveDelay > 0) eta else null,
-                            etd = if (effectiveDelay > 0) etd else null
-                        )
-                    }
-                } else {
-                    // Last resort: use cached route codes
-                    val cachedCodes = CpRouteRepository.getRoute(trainNumber)
-                    if (!cachedCodes.isNullOrEmpty()) {
-                        cachedCodes.map { code ->
-                            val designation = stationsMap[code] ?: "Estação $code"
-                            CpTrainStop(
-                                station = CpGenericEntity(code = code, designation = designation)
-                            )
-                        }
-                    } else {
-                        // Extreme fallback: at least show the current position and origin/dest from vehicle
-                        val stops = mutableListOf<CpTrainStop>()
-                        vehicle.origin?.let { stops.add(CpTrainStop(station = it)) }
-                        if (lastStationGtfs != null && lastStationGtfs != vehicle.origin?.code?.replace("-", "_") && lastStationGtfs != vehicle.destination?.code?.replace("-", "_")) {
-                            stops.add(CpTrainStop(station = CpGenericEntity(code = lastStationGtfs, designation = stationsMap[lastStationGtfs.replace("_", "-")] ?: "Atual")))
-                        }
-                        vehicle.destination?.let { stops.add(CpTrainStop(station = it)) }
-                        stops
-                    }
-                }
-
-                // ── Step 3: Build complete CpTripDetail from vehicle + GTFS ──
-                val detail = CpTripDetail(
-                    trainNumber = trainNumber,
-                    serviceCode = CpServiceCode(
-                        code = vehicle.service?.code,
-                        designation = vehicle.service?.designation
-                    ),
-                    lastStationCode = lastStationGtfs,
-                    delay = delayMin,
-                    status = vehicle.status,
-                    hasDisruptions = vehicle.hasDisruptions,
-                    latitude = vehicle.latitude,
-                    longitude = vehicle.longitude,
-                    trainStops = trainStops
-                )
-
-                trip = detail
-                errorMsg = null
-            } catch (e: Exception) {
-                e.printStackTrace()
-                if (trip == null) {
-                    errorMsg = if (e.message?.contains("429") == true) {
-                        "Demasiados pedidos. Tente novamente mais tarde."
-                    } else {
-                        "Erro: ${e.javaClass.simpleName}"
-                    }
+    val isAdmin = remember { com.example.metrotime.prefs.Prefs.isAdmin(activity) }
+    if (isMaintenanceMode && !isAdmin) {
+        Box(modifier = Modifier.fillMaxSize().background(Color(0xFF121212)), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
+                Text("🔧", fontSize = 64.sp)
+                Spacer(modifier = Modifier.height(24.dp))
+                Text("App em manutenção", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("Voltaremos assim que possível. A nossa equipa está a trabalhar para melhorar a tua experiência.", color = Color.Gray, fontSize = 16.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                Spacer(modifier = Modifier.height(24.dp))
+                Button(onClick = { activity.finish() }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3B82F6))) {
+                    Text("Voltar", color = Color.White, fontWeight = FontWeight.Bold)
                 }
             }
-            isLoading = false
-            delay(60_000)
+        }
+        return
+    }
+
+    // Atualiza a cada 15 s, só enquanto o ecrã está visível
+    LaunchedEffect(trainNumber, runDate) {
+        activity.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (isActive) {
+                try {
+                    val (loaded, date) = CpRepository.getTripDetail(trainNumber, runDate)
+                    trip = loaded
+                    tripDate = date
+                    errorMsg = null
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    if (trip == null) {
+                        errorMsg = "Erro: ${e.javaClass.simpleName}"
+                    }
+                }
+                now = CpTime.now()
+                following = com.example.metrotime.work.CpFollow.isFollowing(activity, trainNumber)
+                isLoading = false
+                delay(15_000)
+            }
         }
     }
+
+    val t = trip
+    val stops = t?.trainStops ?: emptyList()
+    val moments = remember(stops, tripDate) { tripDate?.let { CpTripClock.moments(it, stops) } ?: emptyList() }
+    val serviceShort = CpService.shortName(t?.effectiveService?.code)
+    val destinationName = stops.lastOrNull()?.station?.designation?.let { formatStationName(it) }
 
     Column(modifier = Modifier.fillMaxSize()) {
         TopAppBar(
@@ -278,6 +245,31 @@ fun CpTripDetailScreen(activity: ComponentActivity, trainNumber: Int) {
                     )
                 }
             },
+            actions = {
+                if (t != null && stops.isNotEmpty()) {
+                    // Ver no mapa ao vivo
+                    IconButton(onClick = {
+                        activity.startActivity(
+                            Intent(activity, LiveMapActivity::class.java).putExtra(LiveMapActivity.EXTRA_FOCUS_CP_TRAIN, trainNumber)
+                        )
+                    }) { Icon(MapIcon, contentDescription = "Ver no mapa", tint = Color.White) }
+                    // Partilhar
+                    IconButton(onClick = {
+                        val text = shareText(trainNumber, serviceShort, stops, moments, t, fromCode, toCode)
+                        activity.startActivity(Intent.createChooser(
+                            Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), "Partilhar viagem"
+                        ))
+                    }) { Icon(Icons.Filled.Share, contentDescription = "Partilhar", tint = Color.White) }
+                    // Seguir
+                    IconButton(onClick = { showFollow = true }) {
+                        Icon(
+                            Icons.Filled.Notifications,
+                            contentDescription = if (following) "A seguir" else "Seguir",
+                            tint = if (following) Color(0xFF4ADE80) else Color.White
+                        )
+                    }
+                }
+            },
             colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkBackground)
         )
 
@@ -285,13 +277,11 @@ fun CpTripDetailScreen(activity: ComponentActivity, trainNumber: Int) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = CpIntercidades)
             }
-        } else if (errorMsg != null && trip == null) {
+        } else if (errorMsg != null && t == null) {
             Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
                 Text(errorMsg.orEmpty(), color = Color.Red)
             }
-        } else if (trip != null) {
-            val t = trip!!
-            
+        } else if (t != null) {
             Column(modifier = Modifier.fillMaxSize()) {
                 if (errorMsg != null) {
                     Text(
@@ -301,35 +291,108 @@ fun CpTripDetailScreen(activity: ComponentActivity, trainNumber: Int) {
                         fontSize = 12.sp
                     )
                 }
-                
-                val stops = t.trainStops ?: emptyList()
+
                 val lastStationCode = t.lastStationCode
+                val inferredStatus = inferTripStatus(t, moments, now)
 
                 // Find the index of the current/last station
                 val currentStopIndex = stops.indexOfLast { stop ->
                     stop.station?.code == lastStationCode
                 }
 
-                val trainPosition = calculateTrainPosition(stops, currentStopIndex, t.status)
+                val (trainPosition, isApiLagging) = calculateTrainPosition(stops, currentStopIndex, inferredStatus, moments, now)
+
+                // Paragens já passadas: pela posição no relógio quando o GPS da CP está atrasado
+                val timeBasedIdx = if (trainPosition >= 0f) trainPosition.toInt() else -1
+                val effectiveCurrentIdx = when {
+                    timeBasedIdx >= 0 && (currentStopIndex < 0 || timeBasedIdx > currentStopIndex) -> timeBasedIdx
+                    currentStopIndex >= 0 -> currentStopIndex
+                    else -> timeBasedIdx
+                }
+                val fromIdx = fromCode?.let { c -> stops.indexOfFirst { it.station?.code == c } } ?: -1
+                val toIdx = toCode?.let { c -> stops.indexOfLast { it.station?.code == c } } ?: -1
+                val stationIdx = stationCode?.let { c ->
+                    if (stationIsArrival) stops.indexOfLast { it.station?.code == c } else stops.indexOfFirst { it.station?.code == c }
+                } ?: -1
+
+                // Começa com a posição do comboio (ou a tua estação) à vista
+                val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+                var scrolled by remember { mutableStateOf(false) }
+                LaunchedEffect(stops.size) {
+                    if (!scrolled && stops.isNotEmpty()) {
+                        scrolled = true
+                        val target = when {
+                            effectiveCurrentIdx >= 0 -> effectiveCurrentIdx
+                            fromIdx >= 0 -> fromIdx
+                            stationIdx >= 0 -> stationIdx
+                            else -> 0
+                        }
+                        // O cabeçalho é o primeiro item; deixa duas paragens antes à vista
+                        if (target > 2) listState.animateScrollToItem(target - 1)
+                    }
+                }
 
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(0.dp)
                 ) {
                     // Header card
                     item(key = "header") {
-                        TripHeaderCard(t, trainNumber)
+                        TripHeaderCard(t, trainNumber, inferredStatus)
                         Spacer(modifier = Modifier.height(16.dp))
                     }
 
-                    // Find the index of the current/last station already done above
+                    if (isApiLagging) {
+                        item(key = "api_lag_warning") {
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 16.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF4A3500))
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("📡", fontSize = 20.sp)
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Column {
+                                        Text(
+                                            "A aguardar GPS da CP",
+                                            color = Color(0xFFF59E0B),
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 14.sp
+                                        )
+                                        Text(
+                                            "Localização estimada pelo tempo previsto. O radar da CP tem atraso e ainda não atualizou a última estação.",
+                                            color = Color(0xFFD4A44A),
+                                            fontSize = 12.sp,
+                                            lineHeight = 16.sp
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     itemsIndexed(stops, key = { idx, stop -> "${idx}_${stop.station?.code}" }) { index, stop ->
-                        val isPast = index < currentStopIndex
-                        val isCurrent = index == currentStopIndex
+                        val isPast = index < effectiveCurrentIdx
+                        val isCurrent = index == effectiveCurrentIdx
                         val isFirst = index == 0
                         val isLast = index == stops.lastIndex
+                        val role = when (index) {
+                            fromIdx -> moments.getOrNull(index)?.departureOrArrival?.let { "Entras aqui · parte às ${it.format(TRIP_HM)}" } ?: "Entras aqui"
+                            toIdx -> moments.getOrNull(index)?.arrivalOrDeparture?.let { "Sais aqui · chega às ${it.format(TRIP_HM)}" } ?: "Sais aqui"
+                            // Vieste do quadro desta estação: diz só quando o comboio lá passa
+                            stationIdx -> if (stationIsArrival) {
+                                moments.getOrNull(index)?.arrivalOrDeparture?.let { "Chega aqui às ${it.format(TRIP_HM)}" }
+                            } else {
+                                moments.getOrNull(index)?.departureOrArrival?.let { "Parte daqui às ${it.format(TRIP_HM)}" }
+                            }
+                            else -> null
+                        }
 
                         TimelineStopRow(
                             stop = stop,
@@ -337,20 +400,71 @@ fun CpTripDetailScreen(activity: ComponentActivity, trainNumber: Int) {
                             isCurrent = isCurrent,
                             isFirst = isFirst,
                             isLast = isLast,
-                            serviceColor = getServiceColor(t.serviceCode?.code),
+                            serviceColor = getServiceColor(t.effectiveService?.code),
                             index = index,
-                            trainPosition = trainPosition
+                            trainPosition = trainPosition,
+                            role = role,
+                            roleColor = if (index == fromIdx || index == toIdx) Color(0xFF4ADE80) else Color(0xFF60A5FA)
                         )
                     }
+                }
+
+                if (showFollow) {
+                    CpFollowDialog(
+                        trainNumber = trainNumber,
+                        runDate = (tripDate ?: CpTime.today()).toString(),
+                        service = serviceShort,
+                        destination = destinationName,
+                        stops = stops,
+                        fromIndex = when {
+                            fromIdx >= 0 -> fromIdx + 1
+                            effectiveCurrentIdx >= 0 -> effectiveCurrentIdx + 1
+                            else -> 1
+                        },
+                        boardCode = fromCode,
+                        preselectCode = toCode ?: stationCode?.takeIf { stationIsArrival },
+                        onDismiss = {
+                            showFollow = false
+                            following = com.example.metrotime.work.CpFollow.isFollowing(activity, trainNumber)
+                        }
+                    )
                 }
             }
         }
     }
 }
 
+/** Texto para partilhar: "Vou no Intercidades 520 (Lisboa → Porto). Chego a Coimbra-B às 14:35." */
+private fun shareText(
+    trainNumber: Int,
+    service: String,
+    stops: List<CpTrainStop>,
+    moments: List<CpTripClock.StopMoment>,
+    trip: CpTripDetail,
+    fromCode: String?,
+    toCode: String?
+): String {
+    val origin = formatStationName(stops.firstOrNull()?.station?.designation ?: "")
+    val destination = formatStationName(stops.lastOrNull()?.station?.designation ?: "")
+    val toIdx = toCode?.let { c -> stops.indexOfLast { it.station?.code == c } }?.takeIf { it >= 0 } ?: stops.lastIndex
+    val fromIdx = fromCode?.let { c -> stops.indexOfFirst { it.station?.code == c } }?.takeIf { it >= 0 }
+    val arrival = moments.getOrNull(toIdx)?.arrivalOrDeparture?.format(TRIP_HM)
+    val delay = (stops.getOrNull(toIdx)?.delay ?: trip.delay)?.takeIf { it > 0 }
+    return buildString {
+        append("Vou no ${CpService.longName(service)} $trainNumber ($origin → $destination).")
+        fromIdx?.let { i ->
+            moments.getOrNull(i)?.departureOrArrival?.let {
+                append(" Parto de ${formatStationName(stops[i].station?.designation ?: "")} às ${it.format(TRIP_HM)}.")
+            }
+        }
+        if (arrival != null) append(" Chego a ${formatStationName(stops[toIdx].station?.designation ?: "")} às $arrival")
+        append(if (delay != null) " (+$delay min de atraso)." else ".")
+    }
+}
+
 @Composable
-fun TripHeaderCard(trip: CpTripDetail, knownTrainNumber: Int) {
-    val serviceColor = getServiceColor(trip.serviceCode?.code)
+fun TripHeaderCard(trip: CpTripDetail, knownTrainNumber: Int, inferredStatus: String = trip.status ?: VehicleStatus.NOT_STARTED) {
+    val serviceColor = getServiceColor(trip.effectiveService?.code)
     // Trips API: delay is already in MINUTES (not seconds!)
     val delayMin = trip.delay ?: 0
     val delayColor = when {
@@ -383,7 +497,7 @@ fun TripHeaderCard(trip: CpTripDetail, knownTrainNumber: Int) {
                             .padding(horizontal = 10.dp, vertical = 5.dp)
                     ) {
                         Text(
-                            text = trip.serviceCode?.designation ?: "?",
+                            text = trip.effectiveService?.designation ?: "?",
                             color = Color.White,
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 14.sp
@@ -402,8 +516,8 @@ fun TripHeaderCard(trip: CpTripDetail, knownTrainNumber: Int) {
 
                 // Origin → Destination
                 val stops = trip.trainStops ?: emptyList()
-                val origin = stops.firstOrNull()?.station?.designation ?: "?"
-                val destination = stops.lastOrNull()?.station?.designation ?: "?"
+                val origin = formatStationName(stops.firstOrNull()?.station?.designation ?: "?")
+                val destination = formatStationName(stops.lastOrNull()?.station?.designation ?: "?")
                 Text(
                     text = "$origin  →  $destination",
                     color = Color.LightGray,
@@ -419,15 +533,23 @@ fun TripHeaderCard(trip: CpTripDetail, knownTrainNumber: Int) {
                         Text(text = "Duração: ${trip.duration}", color = Color.Gray, fontSize = 13.sp)
                         Spacer(modifier = Modifier.width(16.dp))
                     }
+
+                    val isNotStarted = inferredStatus == VehicleStatus.NOT_STARTED
+                    val (chipText, chipColor) = when {
+                        isNotStarted && delayMin <= 0 -> "Agendado" to Color.Gray
+                        delayMin <= 0 -> "Na hora" to Color(0xFF4CAF50)
+                        else -> "+${delayMin} min atraso" to delayColor
+                    }
+
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(12.dp))
-                            .background(delayColor.copy(alpha = 0.15f))
+                            .background(chipColor.copy(alpha = 0.15f))
                             .padding(horizontal = 10.dp, vertical = 4.dp)
                     ) {
                         Text(
-                            text = if (delayMin <= 0) "Sem atraso" else "+${delayMin} min atraso",
-                            color = delayColor,
+                            text = chipText,
+                            color = chipColor,
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp
                         )
@@ -435,7 +557,7 @@ fun TripHeaderCard(trip: CpTripDetail, knownTrainNumber: Int) {
                 }
 
                 // Status
-                val statusText = when (trip.status) {
+                val statusText = when (inferredStatus) {
                     VehicleStatus.IN_TRANSIT -> "Em trânsito"
                     VehicleStatus.AT_STATION -> "Na estação"
                     VehicleStatus.AT_ORIGIN -> "Na origem"
@@ -465,7 +587,9 @@ fun TimelineStopRow(
     isLast: Boolean,
     serviceColor: Color,
     index: Int,
-    trainPosition: Float
+    trainPosition: Float,
+    role: String? = null,
+    roleColor: Color = Color(0xFF4ADE80)
 ) {
     // Past and current stations use service color. Future uses gray.
     val dotColor = when {
@@ -591,9 +715,13 @@ fun TimelineStopRow(
                 .weight(1f)
                 .padding(start = 12.dp, top = 8.dp, bottom = 8.dp, end = 8.dp)
         ) {
+            // A tua estação (de onde vieste ou onde vais sair)
+            if (role != null) {
+                Text(role, color = roleColor, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
             // Station name
             Text(
-                text = stop.station?.designation ?: "?",
+                text = formatStationName(stop.station?.designation ?: "?"),
                 color = if (isCurrent) Color.White else textColor,
                 fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
                 fontSize = if (isCurrent) 15.sp else 14.sp,

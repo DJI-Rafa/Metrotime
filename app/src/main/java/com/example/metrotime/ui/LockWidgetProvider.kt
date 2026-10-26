@@ -4,6 +4,8 @@ import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
 import android.content.Context
 import android.content.Intent
+import com.example.metrotime.data.ArrivalsRepo
+import com.example.metrotime.work.MetroWidgetViews
 import com.example.metrotime.work.WidgetUpdateService
 
 class LockWidgetProvider : AppWidgetProvider() {
@@ -21,6 +23,8 @@ class LockWidgetProvider : AppWidgetProvider() {
     }
 
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
+        // Desenha já (o serviço pode não poder arrancar a partir daqui) e pede tempos novos
+        appWidgetManager.updateAppWidget(appWidgetIds, MetroWidgetViews.lock(context, ArrivalsRepo.currentArrivals.value))
         WidgetUpdateService.requestFetch(context)
     }
 

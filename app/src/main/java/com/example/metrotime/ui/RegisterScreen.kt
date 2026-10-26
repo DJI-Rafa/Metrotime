@@ -179,6 +179,10 @@ fun RegisterScreen(navController: NavController) {
                                                 )
                                                 val db = FirebaseDatabase.getInstance("https://metrotime-569ec-default-rtdb.europe-west1.firebasedatabase.app")
                                                 db.reference.child("users").child(userId).setValue(userMap)
+                                                // Só o nome fica visível aos outros; email e data de nascimento ficam privados
+                                                com.example.metrotime.data.UserDirectory.publishProfile(
+                                                    userId, fullName.trim(), task.result?.user?.email, null
+                                                )
                                             }
                                             Toast.makeText(context, "Conta criada com sucesso!", Toast.LENGTH_SHORT).show()
                                             navController.navigate(Routes.LOGIN) {

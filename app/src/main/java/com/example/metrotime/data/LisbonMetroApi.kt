@@ -1,7 +1,7 @@
 package com.example.metrotime.data
 
-import android.annotation.SuppressLint
 import android.content.Context
+import com.example.metrotime.BuildConfig
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import okhttp3.Interceptor
@@ -11,11 +11,7 @@ import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import retrofit2.http.GET
 import retrofit2.http.Path
-import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
-import javax.net.ssl.SSLContext
-import javax.net.ssl.TrustManager
-import javax.net.ssl.X509TrustManager
 
 class RemoteArrivalsSource(private val context: Context) : ArrivalsSource {
 
@@ -25,46 +21,65 @@ class RemoteArrivalsSource(private val context: Context) : ArrivalsSource {
 
         @GET("tempoEspera/Linha/{linha}")
         suspend fun getLineArrivals(@Path("linha") linha: String): MetroLisboaArrivalResponse
+
+        @GET("estadoLinha/todos")
+        suspend fun getLineStatus(): MetroLineStatusResponse
     }
 
-    private val api: Api by lazy {
-        val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
+    private val api: Api get() = sharedApi
 
-        val authInterceptor = Interceptor { chain ->
-            val original = chain.request()
-            val requestBuilder = original.newBuilder()
-                .header("Authorization", "Bearer 10eb3b0b-6a6a-3114-a7f7-76752c8b6d64")
-                .header("accept", "application/json")
-            val request = requestBuilder.build()
-            chain.proceed(request)
+    companion object {
+        /**
+         * Um só cliente para a app inteira (antes cada ecrã criava o seu).
+         * TLS verificado normalmente: o certificado intermédio que o servidor não envia está em
+         * res/xml/network_security_config.xml (antes a app aceitava qualquer certificado).
+         */
+        private val sharedApi: Api by lazy {
+            val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
+
+            val authInterceptor = Interceptor { chain ->
+                val original = chain.request()
+                val requestBuilder = original.newBuilder()
+                    // Token em local.properties (metro.api.token), fora do repositório público
+                    .header("Authorization", "Bearer ${BuildConfig.METRO_API_TOKEN}")
+                    .header("accept", "application/json")
+                val request = requestBuilder.build()
+                chain.proceed(request)
+            }
+
+            val clientBuilder = OkHttpClient.Builder()
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(15, TimeUnit.SECONDS)
+                .addInterceptor(authInterceptor)
+            if (BuildConfig.DEBUG) {
+                clientBuilder.addInterceptor(
+                    HttpLoggingInterceptor().apply {
+                        level = HttpLoggingInterceptor.Level.BASIC
+                        redactHeader("Authorization")
+                    }
+                )
+            }
+
+            val retrofit = Retrofit.Builder()
+                .baseUrl("https://api.metrolisboa.pt:8243/estadoServicoML/1.0.1/")
+                .client(clientBuilder.build())
+                .addConverterFactory(MoshiConverterFactory.create(moshi))
+                .build()
+
+            retrofit.create(Api::class.java)
         }
 
-        val insecureTrustManager = @SuppressLint("CustomX509TrustManager")
-        object : X509TrustManager {
-            override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) = Unit
-            override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) = Unit
-            override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+        /** Estado das quatro linhas (perturbações), para os alertas e para o separador do metro. */
+        suspend fun fetchLineStatus(): List<com.example.metrotime.data.alerts.MetroLineStatus> =
+            com.example.metrotime.data.alerts.MetroLineStatusParser.parse(sharedApi.getLineStatus().status.orEmpty())
+
+        private val LISBON = java.time.ZoneId.of("Europe/Lisbon")
+
+        /** O metro circula das 6:30 à 1:00; fora disso não se inventam tempos estimados. */
+        fun isMetroOperating(now: java.time.ZonedDateTime = java.time.ZonedDateTime.now(LISBON)): Boolean {
+            val minutes = now.hour * 60 + now.minute
+            return minutes >= 6 * 60 + 30 || minutes < 60
         }
-
-        val sslContext = SSLContext.getInstance("SSL")
-        sslContext.init(null, arrayOf<TrustManager>(insecureTrustManager), java.security.SecureRandom())
-
-        val client = OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(15, TimeUnit.SECONDS)
-            .sslSocketFactory(sslContext.socketFactory, insecureTrustManager)
-            .hostnameVerifier { _, _ -> true }
-            .addInterceptor(authInterceptor)
-            .addInterceptor(HttpLoggingInterceptor().setLevel(HttpLoggingInterceptor.Level.BODY))
-            .build()
-
-        val retrofit = Retrofit.Builder()
-            .baseUrl("https://api.metrolisboa.pt:8243/estadoServicoML/1.0.1/")
-            .client(client)
-            .addConverterFactory(MoshiConverterFactory.create(moshi))
-            .build()
-
-        retrofit.create(Api::class.java)
     }
 
     private val directionNameMap = mapOf(
@@ -124,7 +139,8 @@ class RemoteArrivalsSource(private val context: Context) : ArrivalsSource {
             ?: Station(stationId, stationId, 0.0, 0.0, "", stationId) // Fallback
 
         // If API returned no arrivals, generate estimated arrivals every 4 minutes
-        if (stationSpecificArrivals.isEmpty()) {
+        // (só com o metro a funcionar — de madrugada mostrava comboios que não existem)
+        if (stationSpecificArrivals.isEmpty() && isMetroOperating()) {
             val estimatedArrivals = generateEstimatedArrivals(station)
             if (estimatedArrivals.isNotEmpty()) {
                 return StationArrivals(station, estimatedArrivals, System.currentTimeMillis(), isEstimated = true)
