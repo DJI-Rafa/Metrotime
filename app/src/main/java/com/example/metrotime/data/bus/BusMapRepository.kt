@@ -46,8 +46,40 @@ data class BusScheduleStop(
     val stopId: String,
     val stopName: String,
     val arrivalTime: String,  // e.g. "18:28"
-    val isPassed: Boolean     // true if bus already passed this stop
+    val isPassed: Boolean,    // true if bus already passed this stop
+    /** Hora do horário desta viagem nesta paragem (segundos do dia de serviço; 25:10 = 90600); null se não se souber. */
+    val scheduledSec: Int? = null
 )
+
+/** "18:28:00" ou "25:10" → segundos do dia de serviço. */
+internal fun scheduleSeconds(text: String?): Int? {
+    val p = text?.trim()?.split(":") ?: return null
+    val h = p.getOrNull(0)?.toIntOrNull() ?: return null
+    val m = p.getOrNull(1)?.toIntOrNull() ?: return null
+    return h * 3600 + m * 60 + (p.getOrNull(2)?.toIntOrNull() ?: 0)
+}
+
+/**
+ * Atraso de um autocarro em segundos (negativo = adiantado) pela paragem onde está ou para onde vai, como nas
+ * paragens: o horário da viagem contra a hora de agora. null sem horário desta viagem.
+ */
+fun busScheduleDelay(schedule: List<BusScheduleStop>, stopped: Boolean, nowSec: Int): Int? {
+    val cur = schedule.indexOfFirst { !it.isPassed }.takeIf { it >= 0 } ?: return null
+    val next = schedule[cur].scheduledSec ?: return null
+    val prev = schedule.getOrNull(cur - 1)?.scheduledSec
+    // Viagens que passam da meia-noite: 00:30 conta como 24:30 do dia anterior
+    val now = if (next - nowSec > 12 * 3600) nowSec + 24 * 3600 else nowSec
+    return BusTiming.delaySeconds(prev, next, now, stopped)
+}
+
+/** A mesma viagem com o autocarro noutra paragem (posição nova): as anteriores ficam passadas. */
+fun reanchorSchedule(schedule: List<BusScheduleStop>, currentStopId: String): List<BusScheduleStop> {
+    if (currentStopId.isEmpty()) return schedule
+    val oldCur = schedule.indexOfFirst { !it.isPassed }.coerceAtLeast(0)
+    // A partir de onde ia (os circulares repetem paragens): nunca para trás
+    val idx = (oldCur until schedule.size).firstOrNull { schedule[it].stopId == currentStopId } ?: return schedule
+    return schedule.mapIndexed { i, s -> if (s.isPassed == (i < idx)) s else s.copy(isPassed = i < idx) }
+}
 
 data class BusStop(
     val id: String,
@@ -204,7 +236,7 @@ object BusMapRepository {
     /**
      * Get live vehicle positions for specific line IDs from Carris Metropolitana.
      */
-    suspend fun getLiveBusesForLines(lineIds: Set<String>): List<LiveBus> =
+    suspend fun getLiveBusesForLines(lineIds: Set<String>?): List<LiveBus> =
         withContext(Dispatchers.IO) {
             val results = mutableListOf<LiveBus>()
             
@@ -219,7 +251,8 @@ object BusMapRepository {
                 for (i in 0 until arr.length()) {
                     val v = arr.getJSONObject(i)
                     val lineId = v.optString("line_id", "")
-                    if (lineId !in lineIds) continue
+                    // null: todos (os pontos do mapa)
+                    if (lineIds != null && lineId !in lineIds) continue
                     if (!v.has("lat") || !v.has("lon")) continue
 
                     val lat = v.optDouble("lat", 0.0)
@@ -228,7 +261,8 @@ object BusMapRepository {
 
                     // Sentido: vem em cada autocarro; o percurso (um download) só se faltar
                     val patternId = v.optString("pattern_id", "")
-                    val cmDirection = v.optInt("direction_id", -1).takeIf { it >= 0 } ?: getCmPatternDirection(patternId)
+                    val cmDirection = v.optInt("direction_id", -1).takeIf { it >= 0 }
+                        ?: if (lineIds != null) getCmPatternDirection(patternId) else -1
 
                     results.add(LiveBus(
                         vehicleId = v.optString("id", ""),
@@ -260,7 +294,8 @@ object BusMapRepository {
      */
     suspend fun getLiveBusesCarrisUrban(
         context: Context,
-        routeIds: Set<String>
+        /** null: todos (os pontos do mapa). */
+        routeIds: Set<String>?
     ): List<LiveBus> = withContext(Dispatchers.IO) {
         val results = mutableListOf<LiveBus>()
         try {
@@ -284,7 +319,7 @@ object BusMapRepository {
                     ?: continue
 
                 val normalizedRouteId = normalizeRouteId(routeId)
-                if (normalizedRouteId !in routeIds) continue
+                if (routeIds != null && normalizedRouteId !in routeIds) continue
 
                 val routeInfo = CarrisGtfsData.routes[normalizedRouteId] ?: continue
                 val pos = vehicle.position
@@ -336,12 +371,15 @@ object BusMapRepository {
 
             // A viagem do autocarro: o trip_id sem prefixos ("2776_0_2|170|1|2000")
             val tripKey = tripId?.substringAfterLast("]")
+            // Só com a viagem certa se pode dizer o atraso (sem ela, é a viagem mais parecida pela hora)
+            var exactTrip = false
             if (tripKey != null) {
                 for (i in 0 until trips.length()) {
                     val trip = trips.getJSONObject(i)
                     val ids = trip.optJSONArray("trip_ids") ?: continue
                     if ((0 until ids.length()).any { ids.optString(it).substringAfterLast("]") == tripKey }) {
                         schedule = trip.optJSONArray("schedule")
+                        exactTrip = schedule != null
                         break
                     }
                 }
@@ -424,7 +462,8 @@ object BusMapRepository {
                     stopId = stopId,
                     stopName = stopName,
                     arrivalTime = timeFormatted,
-                    isPassed = isPassed
+                    isPassed = isPassed,
+                    scheduledSec = if (exactTrip) scheduleSeconds(arrivalTime) else null
                 ))
             }
 
@@ -447,6 +486,26 @@ object BusMapRepository {
     ): List<BusScheduleStop> = withContext(Dispatchers.IO) {
         try {
             CarrisGtfsData.ensureLoaded(context)
+
+            // A viagem no horário da Carris (o das paragens): as horas certas de cada paragem, para o atraso
+            val tt = runCatching { CarrisTimetable.load(context) }.getOrNull()
+            val ref = tripId?.let { tt?.ref(it) }
+            if (tt != null && ref != null) {
+                val pattern = tt.patterns[ref shr 16]
+                val trip = ref and 0xFFFF
+                val names = CarrisGtfsData.stops.associate { it.id to it.name }
+                val cur = if (currentStopId.isEmpty()) -1 else pattern.stops.indexOf(currentStopId)
+                return@withContext pattern.stops.mapIndexed { i, stopId ->
+                    val sec = pattern.timeAt(trip, i)
+                    BusScheduleStop(
+                        stopId = stopId,
+                        stopName = names[stopId] ?: stopId,
+                        arrivalTime = "%02d:%02d".format((sec / 3600) % 24, (sec / 60) % 60),
+                        isPassed = cur >= 0 && i < cur,
+                        scheduledSec = sec
+                    )
+                }
+            }
 
             // Find the trip info to get direction
             val tripInfo = tripId?.let { CarrisGtfsData.trip(it) }
@@ -690,15 +749,32 @@ object BusMapRepository {
     suspend fun getStopArrivals(
         context: Context,
         stopId: String,
-        operator: String
+        operator: String,
+        /** Até quando (segundos à frente): 2 h por omissão; o painel da paragem no mapa pede 5 h. */
+        aheadSecs: Int = AHEAD_WINDOW_S,
+        /** Quantas por linha e destino: 3 por omissão (widgets, listas); o mapa pede todas. */
+        perLine: Int = 3
     ): List<StopArrivalInfo> = withContext(Dispatchers.IO) {
-        if (operator == "carris_metropolitana") cmArrivals(stopId) else carrisArrivals(context, stopId)
+        when {
+            operator == "carris_metropolitana" -> cmArrivals(stopId, aheadSecs)
+            // Outras redes (MobiCascais, TCB, MTS, Fertagus, barcos, STCP, Metro do Porto): horário do pacote + direto
+            // Redes da Eleven (Covilhã, Viseu, Guimarães…): as próximas passagens pelo horário
+            operator.startsWith("eleven:") ->
+                com.example.metrotime.data.regional.RegionalRepository.elevenStopArrivals(operator.removePrefix("eleven:"), stopId, aheadSecs)
+            operator.startsWith("pack:") -> {
+                com.example.metrotime.data.regional.RegionalRepository.init(context)
+                com.example.metrotime.data.regional.RegionalRepository.stopArrivals(operator.removePrefix("pack:"), stopId, aheadSecs)
+            }
+            else -> carrisArrivals(context, stopId, aheadSecs, perLine)
+        }
     }
 
     private val LISBON: java.time.ZoneId = java.time.ZoneId.of("Europe/Lisbon")
     /** Janela das chegadas: autocarros até 45 min atrasados e até 2 h à frente. */
     private const val PAST_WINDOW_S = 45 * 60
-    private const val AHEAD_WINDOW_S = 2 * 60 * 60
+    const val AHEAD_WINDOW_S = 2 * 60 * 60
+    /** O painel de uma paragem no mapa: todos os autocarros das próximas 5 horas. */
+    const val STOP_SHEET_WINDOW_S = 5 * 60 * 60
 
     /** "19:58:30" ou "25:10:00" → "19:58" / "01:10". */
     private fun clockOf(text: String?): String? {
@@ -710,7 +786,7 @@ object BusMapRepository {
 
     // ── Carris Metropolitana ────────────────────────────────────────────────
 
-    private suspend fun cmArrivals(stopId: String): List<StopArrivalInfo> {
+    private suspend fun cmArrivals(stopId: String, aheadSecs: Int): List<StopArrivalInfo> {
         val cmColors = runCatching { getCmLines() }.getOrDefault(emptyList()).associate { it.shortName to it.color }
         return try {
             val request = Request.Builder().url("https://api.carrismetropolitana.pt/v2/arrivals/by_stop/$stopId").build()
@@ -725,7 +801,7 @@ object BusMapRepository {
                     val scheduled = if (a.isNull("scheduled_arrival_unix")) null else a.optLong("scheduled_arrival_unix").takeIf { it > 0 }
                     val estimated = if (a.isNull("estimated_arrival_unix")) null else a.optLong("estimated_arrival_unix").takeIf { it > 0 }
                     val at = estimated ?: scheduled ?: continue
-                    if (at < now - 60 || at > now + AHEAD_WINDOW_S) continue
+                    if (at < now - 60 || at > now + aheadSecs) continue
                     // "[BNA17]2725" → "2725"
                     val line = a.optString("line_id").substringAfter("]").trim()
                     if (line.isEmpty()) continue
@@ -842,7 +918,7 @@ object BusMapRepository {
         return if (seqIdx == null) hits.first() else hits.minBy { kotlin.math.abs(it - seqIdx) }
     }
 
-    private fun carrisArrivals(context: Context, stopId: String): List<StopArrivalInfo> {
+    private fun carrisArrivals(context: Context, stopId: String, aheadSecs: Int, perLine: Int): List<StopArrivalInfo> {
         try {
             CarrisGtfsData.ensureLoaded(context)
             val tt = CarrisTimetable.load(context)
@@ -882,7 +958,7 @@ object BusMapRepository {
                         for (i in pattern.starts.indices) {
                             if (!active[pattern.service[i]]) continue
                             val sched = pattern.timeAt(i, stopIdx) - shift
-                            if (sched < nowSec - PAST_WINDOW_S || sched > nowSec + AHEAD_WINDOW_S) continue
+                            if (sched < nowSec - PAST_WINDOW_S || sched > nowSec + aheadSecs) continue
                             val live = liveByTrip[tt.tripId(pattern, i)]
                             val cur = live?.let { positionIn(pattern, it) } ?: -1
                             if (live != null && cur > stopIdx) continue // já passou nesta paragem
@@ -912,7 +988,7 @@ object BusMapRepository {
                         v.routeId ?: continue, v.direction, v.stopId, v.stopSequence, v.stopped, stopId, nowSec
                     ) ?: continue
                     val eta = BusTiming.roundMinutes(place.etaSeconds)
-                    if (eta * 60 > AHEAD_WINDOW_S) continue
+                    if (eta * 60 > aheadSecs) continue
                     val pattern = tt.patterns[place.pattern]
                     val a = info(pattern.routeId, pattern.direction, eta, true, null, null, v.vehicleId) ?: continue
                     // Se for uma viagem do horário com outro número, é o mesmo autocarro que o previsto àquela hora
@@ -924,10 +1000,10 @@ object BusMapRepository {
                 }
             }
 
-            // Até 3 por linha e destino, do mais perto para o mais longe
+            // Até [perLine] por linha e destino, do mais perto para o mais longe
             return out.sortedBy { it.etaMinutes }
                 .groupBy { it.routeShortName to it.destination }.values
-                .flatMap { it.take(3) }
+                .flatMap { it.take(perLine) }
                 .sortedBy { it.etaMinutes }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -1089,7 +1165,7 @@ object BusMapRepository {
 
     // ── Private helpers ─────────────────────────────────────────────────────────
 
-    private suspend fun getCmLines(): List<BusRoute> {
+    internal suspend fun getCmLines(): List<BusRoute> {
         cmLines?.let { return it }
         if (cmLinesLoading) return emptyList()
 

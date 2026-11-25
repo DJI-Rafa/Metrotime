@@ -6,6 +6,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
 
@@ -508,6 +509,45 @@ val PinIcon: ImageVector by lazy {
             moveTo(12f, 7.5f)
             arcTo(2.5f, 2.5f, 0f, true, true, 11.99f, 7.5f)
             close()
+        }
+    }.build()
+}
+
+// ── Ícones do planeador e do "Agora" (desenhados a partir de path data SVG) ──
+
+private fun strokeIcon(name: String, vararg paths: String): ImageVector =
+    ImageVector.Builder(name = name, defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f).apply {
+        paths.forEach {
+            addPath(
+                pathData = addPathNodes(it),
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 2f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round
+            )
+        }
+    }.build()
+
+/** Pessoa a andar (bocados da viagem a pé). */
+val WalkIcon: ImageVector by lazy {
+    strokeIcon("Walk", "M11 4a2 2 0 1 0 4 0a2 2 0 1 0 -4 0", "M10 22l2-7-3-3 1-4 4 3 3 1", "M7 13l1-4")
+}
+
+/** Barco (Transtejo, Soflusa). */
+val BoatIcon: ImageVector by lazy {
+    strokeIcon("Boat", "M3 14h18l-2.5 5h-13z", "M6 14V9h12v5", "M12 9V4", "M2 21c2 1 4 1 6 0s4-1 6 0 4 1 6 0")
+}
+
+/** Edifício de estação (cartão "As minhas estações"). */
+val StationIcon: ImageVector by lazy {
+    strokeIcon("Station", "M3 21h18", "M5 21V9l7-5 7 5v12", "M9 21v-6h6v6")
+}
+
+/** Pega de arrastar: seis pontos. */
+val DragHandleIcon: ImageVector by lazy {
+    ImageVector.Builder(name = "DragHandle", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f).apply {
+        listOf(9f to 6f, 15f to 6f, 9f to 12f, 15f to 12f, 9f to 18f, 15f to 18f).forEach { (x, y) ->
+            addPath(pathData = addPathNodes("M${x - 1.7f} ${y}a1.7 1.7 0 1 0 3.4 0a1.7 1.7 0 1 0 -3.4 0z"), fill = SolidColor(Color.Black))
         }
     }.build()
 }

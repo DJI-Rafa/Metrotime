@@ -17,7 +17,7 @@ object MetroNetwork {
     private const val SPEED_KMH = 30.0
     private const val MIN_HOP_MIN = 1.2
     private const val DWELL_MIN = 0.5
-    private const val TRANSFER_MIN = 4.0
+    const val TRANSFER_MIN = 4.0
 
     private data class Edge(val to: String, val line: String, val km: Double)
 
@@ -66,7 +66,7 @@ object MetroNetwork {
             if (minutes > (best[state] ?: Double.MAX_VALUE)) continue
             if (state.station == to) { end = state; break }
             for (e in edges[state.station].orEmpty()) {
-                val hop = maxOf(MIN_HOP_MIN, e.km / SPEED_KMH * 60) + DWELL_MIN
+                val hop = hopMinutes(e.km)
                 val transfer = if (state.line != null && state.line != e.line) TRANSFER_MIN else 0.0
                 val next = State(e.to, e.line)
                 val cost = minutes + hop + transfer
@@ -85,6 +85,12 @@ object MetroNetwork {
         val km = stations.zipWithNext().sumOf { (a, b) -> km(a, b) ?: 0.0 }
         return Route(stations, lines, km, best[last] ?: 0.0)
     }
+
+    private fun hopMinutes(km: Double): Double = maxOf(MIN_HOP_MIN, km / SPEED_KMH * 60) + DWELL_MIN
+
+    /** Minutos de uma estação à seguinte (com a paragem), pelo mesmo modelo do [route]; null se não forem vizinhas. */
+    fun hopMinutes(a: String, b: String): Double? =
+        edges[a]?.firstOrNull { it.to == b }?.let { hopMinutes(it.km) }
 
     fun haversineKm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
         val r = 6371.0

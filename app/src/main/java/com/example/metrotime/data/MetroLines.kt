@@ -5,14 +5,19 @@ import java.text.Normalizer
 /**
  * As quatro linhas do metro: ordem das estações, terminais, ligações e em que linha se viaja.
  * Sem dependências Android (testado em app/src/test). Ids = os da API ("RB", "AM", …).
+ * As linhas e estações do Metro do Porto ("MP-A", "MP:5737") respondem pelo [PortoMetro], para o mapa, o painel do
+ * metro e o da estação serem os mesmos nas duas cidades.
  */
 object MetroLines {
     val NAMES = listOf("Azul", "Amarela", "Verde", "Vermelha")
 
     /** Estações da linha, por ordem (Reboleira → Santa Apolónia…). */
-    fun stops(line: String): List<String> = MapConfiguration.LINE_STATION_ORDER[line].orEmpty()
+    fun stops(line: String): List<String> =
+        if (com.example.metrotime.data.metro.PortoMetro.isPorto(line)) com.example.metrotime.data.metro.PortoMetro.stops(line)
+        else MapConfiguration.LINE_STATION_ORDER[line].orEmpty()
 
-    fun nameOf(apiId: String): String = MapConfiguration.STATION_COORDS[apiId]?.name ?: apiId
+    fun nameOf(apiId: String): String =
+        MapConfiguration.STATION_COORDS[apiId]?.name ?: com.example.metrotime.data.metro.PortoMetro.nameOf(apiId) ?: apiId
 
     /** "Reboleira ↔ Santa Apolónia". */
     fun terminals(line: String): String? {
@@ -21,7 +26,9 @@ object MetroLines {
     }
 
     /** Linhas que passam numa estação, pela ordem de NAMES. */
-    fun linesOf(apiId: String): List<String> = NAMES.filter { apiId in stops(it) }
+    fun linesOf(apiId: String): List<String> =
+        if (com.example.metrotime.data.metro.PortoMetro.isPorto(apiId)) com.example.metrotime.data.metro.PortoMetro.linesOf(apiId)
+        else NAMES.filter { apiId in stops(it) }
 
     private val MARKS = Regex("\\p{Mn}+")
     private val NON_WORD = Regex("[^a-z0-9]+")
@@ -33,6 +40,7 @@ object MetroLines {
     fun idByName(name: String): String? {
         val n = normalize(name)
         return MapConfiguration.STATION_COORDS.values.firstOrNull { normalize(it.name) == n }?.id
+            ?: com.example.metrotime.data.metro.PortoMetro.idByName(n, ::normalize)
     }
 
     /**
@@ -40,6 +48,8 @@ object MetroLines {
      * de preferência aquela em que o destino é terminal (Campo Grande é da Amarela e da Verde).
      */
     fun lineOfTravel(fromApiId: String, destinationName: String): String? {
+        // No Porto a linha vem com a chegada (várias linhas partilham os mesmos destinos)
+        if (com.example.metrotime.data.metro.PortoMetro.isPorto(fromApiId)) return null
         val dest = idByName(destinationName) ?: return null
         val both = NAMES.filter { fromApiId in stops(it) && dest in stops(it) }
         return both.firstOrNull { stops(it).first() == dest || stops(it).last() == dest } ?: both.firstOrNull()

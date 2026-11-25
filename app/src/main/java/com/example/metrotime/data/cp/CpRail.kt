@@ -112,19 +112,44 @@ object CpTripClock {
         val reported = datesFor(runDate, stops.flatMap { listOf(it.eta ?: it.arrival, it.etd ?: it.departure) })
         // Atraso conhecido em cada paragem (minutos): pelas horas reais ou, sem elas, pelo campo delay
         val known: List<Long?> = stops.mapIndexed { i, stop ->
-            listOfNotNull(
-                if (stop.eta != null) minutesBetween(scheduled[2 * i], reported[2 * i]) else null,
-                if (stop.etd != null) minutesBetween(scheduled[2 * i + 1], reported[2 * i + 1]) else null
-            ).maxOrNull() ?: stop.delay?.takeIf { it >= 0 }?.toLong()
+            knownDelay(
+                scheduled[2 * i], scheduled[2 * i + 1],
+                if (stop.eta != null) reported[2 * i] else null, if (stop.etd != null) reported[2 * i + 1] else null,
+                stop.delay
+            )
         }
         return stops.indices.map { i ->
             val stop = stops[i]
             val late = known[i] ?: neighbourDelay(known, i)
-            val arrival = if (stop.eta != null) reported[2 * i] else scheduled[2 * i]?.plusMinutes(late)
-            var departure = if (stop.etd != null) reported[2 * i + 1] else scheduled[2 * i + 1]?.plusMinutes(late)
-            if (arrival != null && departure != null && departure.isBefore(arrival)) departure = arrival
-            StopMoment(scheduled[2 * i], scheduled[2 * i + 1], arrival, departure, estimated = known[i] == null && late != 0L)
+            momentOf(
+                scheduled[2 * i], scheduled[2 * i + 1],
+                if (stop.eta != null) reported[2 * i] else null, if (stop.etd != null) reported[2 * i + 1] else null,
+                late, estimated = known[i] == null && late != 0L
+            )
         }
+    }
+
+    /**
+     * Atraso conhecido de uma paragem (minutos): o maior entre o da hora real de chegada e o da de partida; sem
+     * elas, o campo delay da CP. null = sem dados. A mesma regra no percurso do comboio e no quadro da estação.
+     */
+    fun knownDelay(
+        scheduledArrival: LocalDateTime?, scheduledDeparture: LocalDateTime?,
+        eta: LocalDateTime?, etd: LocalDateTime?, delayField: Int?
+    ): Long? = listOfNotNull(
+        eta?.let { minutesBetween(scheduledArrival, it) },
+        etd?.let { minutesBetween(scheduledDeparture, it) }
+    ).maxOrNull() ?: delayField?.takeIf { it >= 0 }?.toLong()
+
+    /** Chegada e partida esperadas: as reais quando a CP as dá; às que faltam soma-se [late] minutos. */
+    fun momentOf(
+        scheduledArrival: LocalDateTime?, scheduledDeparture: LocalDateTime?,
+        eta: LocalDateTime?, etd: LocalDateTime?, late: Long, estimated: Boolean = false
+    ): StopMoment {
+        val arrival = eta ?: scheduledArrival?.plusMinutes(late)
+        var departure = etd ?: scheduledDeparture?.plusMinutes(late)
+        if (arrival != null && departure != null && departure.isBefore(arrival)) departure = arrival
+        return StopMoment(scheduledArrival, scheduledDeparture, arrival, departure, estimated)
     }
 
     private fun minutesBetween(a: LocalDateTime?, b: LocalDateTime?): Long? =
@@ -181,6 +206,19 @@ data class CpJourneyOption(
     /** Atraso em minutos na estação de partida (null = sem dados em tempo real). */
     val delayMinutes: Int? get() = departureStop.delay?.takeIf { it >= 0 }
     val suppressed: Boolean get() = departureStop.supression != null || arrivalStop.supression != null || departureStop.delay == -1
+
+    /** Partida esperada: a mesma do quadro da estação de partida ([CpBoard.expected]). */
+    val realDeparture: LocalDateTime
+        get() = CpBoard.expected(departureStop, CpBoard.sameDay(departure, departureStop.arrivalTime), departure).departure ?: departure
+
+    /** Chegada esperada: a mesma do quadro de chegadas da estação de destino (sem dados, com o atraso da partida). */
+    val realArrival: LocalDateTime
+        get() {
+            val m = CpBoard.expected(arrivalStop, arrival, CpBoard.sameDay(arrival, arrivalStop.departureTime))
+            val own = CpTripClock.knownDelay(arrival, null, m.arrival.takeIf { arrivalStop.eta != null }, null, arrivalStop.delay)
+            return if (own != null) m.arrival ?: arrival
+            else arrival.plusMinutes(Duration.between(departure, realDeparture).toMinutes().coerceAtLeast(0))
+        }
 }
 
 /**
@@ -211,7 +249,7 @@ object CpJourney {
                 arrivalStop = arr.third.stop,
                 runDate = o.queryDate
             )
-        }.distinctBy { it.trainNumber to it.departure }.sortedBy { it.departure }
+        }.distinctBy { it.trainNumber to it.departure }.sortedWith(compareBy({ it.realDeparture }, { it.departure }))
     }
 }
 
@@ -245,13 +283,30 @@ class CpTrack(val line: List<Pair<Double, Double>>) {
         return best
     }
 
+    /** Comprimento do traçado (metros). */
+    val length: Double get() = if (along.isEmpty()) 0.0 else along.last()
+
     /** Ponto (lat, lon) a [s] metros do início do traçado. */
     fun pointAt(s: Double): Pair<Double, Double> {
-        var k = 0
-        while (k < along.size - 2 && along[k + 1] < s) k++
+        if (line.size < 2) return line.first()
+        // Procura binária: o mapa pede muitos pontos por segundo e há traçados com milhares de pontos
+        var lo = 0
+        var hi = along.size - 2
+        while (lo < hi) {
+            val mid = (lo + hi + 1) ushr 1
+            if (along[mid] < s) lo = mid else hi = mid - 1
+        }
+        val k = lo
         val span = along[k + 1] - along[k]
         val t = if (span == 0.0) 0.0 else ((s - along[k]) / span).coerceIn(0.0, 1.0)
         return Pair(line[k].first + (line[k + 1].first - line[k].first) * t, line[k].second + (line[k + 1].second - line[k].second) * t)
+    }
+
+    /** Rumo (graus, 0 = norte) do traçado em [s], no sentido em que ele avança. */
+    fun bearingAt(s: Double): Double {
+        val a = pointAt((s - 25.0).coerceAtLeast(0.0))
+        val b = pointAt((s + 25.0).coerceAtMost(length))
+        return bearing(a, b)
     }
 
     /** Pedaço do traçado entre duas distâncias, como (lat, lon). */

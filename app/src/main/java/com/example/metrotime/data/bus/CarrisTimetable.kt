@@ -38,11 +38,18 @@ object CarrisTimetable {
         fun timeAt(trip: Int, stopIdx: Int): Int = starts[trip] + profiles[profile[trip]][stopIdx] * 60
     }
 
+    /** Paragem com nome, posição e concelho (só no horário da Carris Metropolitana). */
+    class StopMeta(val name: String, val lat: Double, val lon: Double, val area: String)
+
     class Data(
         val feedDate: String,
         val services: List<Service>,
         val routes: Map<String, Pair<String, String>>,
-        val patterns: List<Pattern>
+        val patterns: List<Pattern>,
+        /** Cor de cada linha ("C61D23"), quando o ficheiro a traz. */
+        val colors: Map<String, String> = emptyMap(),
+        /** Nome e posição das paragens, quando o ficheiro os traz. */
+        val stopMeta: Map<String, StopMeta> = emptyMap()
     ) {
         private val byRoute: Map<String, List<Int>> = patterns.indices.groupBy { patterns[it].routeId }
 
@@ -154,12 +161,24 @@ object CarrisTimetable {
         fun ints(): IntArray = IntArray(varint()) { varint() }
 
         val magic = String(bytes, 0, 4, Charsets.US_ASCII).also { pos = 4 }
-        require(magic == "CTT1") { "carris_timetable.bin: formato desconhecido ($magic)" }
+        require(magic == "CTT1" || magic == "CTT2") { "horário: formato desconhecido ($magic)" }
+        // CTT2 (Carris Metropolitana): cada linha com a cor e cada paragem com nome, posição e concelho
+        val v2 = magic == "CTT2"
         val feedDate = text()
         val services = List(varint()) { Service(text(), varint(), varint(), varint(), ints(), ints()) }
         val routes = HashMap<String, Pair<String, String>>()
-        repeat(varint()) { routes[text()] = text() to text() }
-        val stopIds = Array(varint()) { text() }
+        val colors = HashMap<String, String>()
+        repeat(varint()) {
+            val id = text()
+            routes[id] = text() to text()
+            if (v2) colors[id] = text()
+        }
+        val stopMeta = HashMap<String, StopMeta>()
+        val stopIds = Array(varint()) {
+            val id = text()
+            if (v2) stopMeta[id] = StopMeta(text(), varint() / 1e6, varint() / 1e6 - 180, text())
+            id
+        }
         val patterns = List(varint()) {
             val routeId = text()
             val direction = varint()
@@ -173,6 +192,29 @@ object CarrisTimetable {
             for (i in 0 until n) { a[i] = varint(); b[i] = varint(); st[i] = varint(); pr[i] = varint(); sv[i] = varint() }
             Pattern(routeId, direction, stops, profiles, a, b, st, pr, sv)
         }
-        return Data(feedDate, services, routes, patterns)
+        return Data(feedDate, services, routes, patterns, colors, stopMeta)
     }
+}
+
+/**
+ * Horário da Carris Metropolitana (assets/cm_timetable.bin, gerado do GTFS por tools/build_cm_timetable.py): as
+ * linhas, as viagens e as paragens (nome, posição e concelho) de toda a área metropolitana, para o planeador e
+ * para a pesquisa. Cerca de 460 KB.
+ */
+object CmTimetable {
+    @Volatile private var data: CarrisTimetable.Data? = null
+    @Volatile private var failed = false
+
+    @Synchronized
+    fun load(context: Context): CarrisTimetable.Data? {
+        data?.let { return it }
+        if (failed) return null
+        return runCatching { context.assets.open("cm_timetable.bin").use { CarrisTimetable.parse(it) } }
+            .onFailure { failed = true; it.printStackTrace() }
+            .getOrNull()
+            ?.also { data = it }
+    }
+
+    /** O operador ("[A2L1N]") de uma linha ("[A2L1N]4001_0") ou de um serviço ("[ZLLEW][A2L1N]1000"). */
+    fun agencyOf(id: String): String = Regex("\\[([A-Z0-9]+)]").findAll(id).lastOrNull()?.groupValues?.get(1) ?: ""
 }

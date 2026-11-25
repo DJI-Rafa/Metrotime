@@ -15,7 +15,8 @@ object TrainMatcher {
 
     data class Train(val id: String, val lat: Double, val lon: Double, val ageSec: Double, val bearing: Double?)
     data class User(val lat: Double, val lon: Double, val speedKmh: Double, val bearing: Double?)
-    data class Stop(val code: String, val name: String, val lat: Double, val lon: Double)
+    /** Paragem do comboio; [departureMs] = quando parte (ou partiu) de lá, se se sabe. */
+    data class Stop(val code: String, val name: String, val lat: Double, val lon: Double, val departureMs: Long? = null)
 
     /** Abaixo disto não se procura comboio (a pé, de bicicleta, parado). */
     const val MIN_SPEED_KMH = 30.0
@@ -29,6 +30,33 @@ object TrainMatcher {
     const val STOP_MAX_M = 1_500.0
 
     private const val MAX_AGE_SEC = 180.0
+
+    /**
+     * Onde embarcaste quando só se deu pelo comboio já a meio do percurso (as posições chegam atrasadas e
+     * ele pode só bater muito depois de partir): a paragem dele ao pé de onde acabou a tua viagem anterior
+     * ([previousEnd], às [previousEndMs]), se ficar antes de onde estás agora ([here]) e, quando se sabe a
+     * hora, se o comboio partiu de lá depois de lá chegares. null se não houver uma assim.
+     */
+    fun boardingFromPrevious(
+        stops: List<Stop>,
+        track: CpTrack?,
+        previousEnd: Pair<Double, Double>,
+        previousEndMs: Long,
+        here: Pair<Double, Double>,
+        nowMs: Long,
+        maxM: Double = 600.0
+    ): Stop? {
+        val stop = nearestStop(stops, previousEnd, maxM) ?: return null
+        // Tinhas de lá estar antes de o comboio partir (com 2 min de folga), e ele já partiu
+        stop.departureMs?.let { if (it < previousEndMs - 2 * 60_000L || it > nowMs) return null }
+        val before = if (track != null && track.line.size >= 2) {
+            track.locate(stop.lat to stop.lon).s < track.locate(here).s - 500.0
+        } else {
+            val hereIndex = stops.indices.minByOrNull { CpTrack.metres(here, stops[it].lat to stops[it].lon) } ?: return null
+            stops.indexOf(stop) < hereIndex
+        }
+        return stop.takeIf { before }
+    }
 
     /** Quanto o comboio pode ter andado desde a posição que temos (à tua velocidade, que é a dele). */
     fun advance(train: Train, speedKmh: Double): Double = speedKmh / 3.6 * train.ageSec.coerceIn(0.0, MAX_AGE_SEC)

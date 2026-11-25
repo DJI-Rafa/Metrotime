@@ -45,3 +45,17 @@ tmp_*.json
 .firebase/
 firebase-debug.log
 database-debug.log
+
+# ── Lixo local (assinaturas dos APKs, IDE) ──
+*.idsig
+/.idea/deviceManager.xml
+
+# ── Dados de depuração e scripts soltos na raiz ──
+/cm_stops.json
+/firebase_vehicles.json
+/dump_*.py
+/fetch_gtfs.py
+/parse_har.py
+
+# ── Vídeo promocional (ficheiros grandes e a gravação da voz): fica só no computador ──
+/video/

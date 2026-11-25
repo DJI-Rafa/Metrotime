@@ -27,6 +27,8 @@ class LocationKeepAliveWorker(
     override suspend fun doWork(): Result {
         // Rede de segurança se o serviço tiver sido morto: comboio seguido, widget CP e perturbações
         runCatching { CpFollow.check(applicationContext) }
+        runCatching { BusFollow.check(applicationContext) }
+        runCatching { LastTripAlert.check(applicationContext) }
         runCatching { CpWidgetUpdater.updateAll(applicationContext) }
         runCatching { BusWidgetUpdater.updateAll(applicationContext) }
         runCatching { DisruptionAlerts.check(applicationContext) }

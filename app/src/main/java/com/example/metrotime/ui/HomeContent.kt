@@ -93,16 +93,13 @@ fun HomeContent(activity: ComponentActivity, animVisible: Boolean, animate: Bool
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         StaggeredItem(delayMillis = 0, visible = animVisible, animate = animate) {
             HomeSearch(activity)
         }
         StaggeredItem(delayMillis = 120, visible = animVisible, animate = animate) {
-            HomeSection("Agora") {
-                HomeMetroCard(metro) { onOpenCategory("Metro") }
-                HomeFavoritesCard(activity)
-            }
+            HomeNowSection(activity, metro, onOpenCategory)
         }
         StaggeredItem(delayMillis = 240, visible = animVisible, animate = animate) {
             HomeSection("Explorar") { HomeExplore(activity, metro, onOpenCategory) }
@@ -131,26 +128,26 @@ internal fun HomeSection(title: String, content: @Composable ColumnScope.() -> U
 
 @Composable
 private fun HomeSearch(activity: ComponentActivity) {
-    var recents by remember { mutableStateOf(Prefs.getRecentJourneys(activity)) }
+    var recents by remember { mutableStateOf(Prefs.getRecentPlans(activity)) }
     // Ao voltar do planeador as viagens recentes podem ter mudado
     LaunchedEffect(Unit) {
-        activity.repeatOnLifecycle(Lifecycle.State.RESUMED) { recents = Prefs.getRecentJourneys(activity) }
+        activity.repeatOnLifecycle(Lifecycle.State.RESUMED) { recents = Prefs.getRecentPlans(activity) }
     }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Card(
-            onClick = { activity.startActivity(CpJourneyActivity.newIntent(activity)) },
-            modifier = Modifier.fillMaxWidth().height(52.dp),
+            onClick = { activity.startActivity(TripPlannerActivity.newIntent(activity)) },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
             shape = RoundedCornerShape(14.dp),
             colors = CardDefaults.cardColors(containerColor = CardBackground),
             border = BorderStroke(1.dp, Color(0xFF3A3A3A))
         ) {
             Row(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(Icons.Filled.Search, contentDescription = null, tint = TextSecondaryDark, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(12.dp))
-                Text("Planear viagem de comboio", color = TextSecondaryDark, fontSize = 15.sp)
+                Text("Para onde vais? Metro, comboio, autocarro", color = TextSecondaryDark, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         if (recents.isNotEmpty()) {
@@ -159,24 +156,26 @@ private fun HomeSearch(activity: ComponentActivity) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 recents.take(4).forEach { entry ->
-                    val parts = entry.split("|")
-                    val label = "${formatStationName(parts[1])} → ${formatStationName(parts[3])}"
+                    val fromEntry = entry.substringBefore("\t")
+                    val toEntry = entry.substringAfter("\t")
+                    val label = "${com.example.metrotime.data.plan.Place.decode(fromEntry)?.name ?: "?"} → " +
+                        (com.example.metrotime.data.plan.Place.decode(toEntry)?.name ?: "?")
+                    // No máximo quase a largura do ecrã, com reticências (em vez de a letra ficar cortada na borda)
                     Row(
                         modifier = Modifier
-                            .height(34.dp)
+                            .widthIn(max = 300.dp)
+                            .heightIn(min = 34.dp)
                             .clip(RoundedCornerShape(17.dp))
                             .background(CardBackground)
                             .clickable {
-                                activity.startActivity(
-                                    CpJourneyActivity.newIntent(activity, from = "${parts[0]}|${parts[1]}", to = "${parts[2]}|${parts[3]}")
-                                )
+                                activity.startActivity(TripPlannerActivity.newIntent(activity, from = fromEntry, to = toEntry))
                             }
-                            .padding(horizontal = 12.dp),
+                            .padding(horizontal = 12.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(ClockIcon, contentDescription = null, tint = TextSecondaryDark, modifier = Modifier.size(14.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text(label, color = Color.White, fontSize = 13.sp, maxLines = 1)
+                        Text(label, color = Color.White, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
@@ -205,7 +204,9 @@ internal fun rememberMetroLines(activity: ComponentActivity): MetroNow {
                 state = if (!RemoteArrivalsSource.isMetroOperating()) {
                     MetroNow.Closed
                 } else {
-                    attempt { RemoteArrivalsSource.fetchLineStatus() }?.takeIf { it.isNotEmpty() }?.let { MetroNow.Lines(it) }
+                    attempt { RemoteArrivalsSource.fetchLineStatus() }?.takeIf { it.isNotEmpty() }
+                        ?.also { com.example.metrotime.data.alerts.DisruptionLog.record(activity, it) }
+                        ?.let { MetroNow.Lines(it) }
                         ?: (state as? MetroNow.Lines ?: MetroNow.Unknown)
                 }
                 delay(120_000)
@@ -216,7 +217,7 @@ internal fun rememberMetroLines(activity: ComponentActivity): MetroNow {
 }
 
 @Composable
-private fun HomeMetroCard(state: MetroNow, onClick: () -> Unit) {
+internal fun HomeMetroCard(state: MetroNow, onClick: () -> Unit) {
     val disrupted = (state as? MetroNow.Lines)?.disrupted.orEmpty()
     val alert = disrupted.isNotEmpty()
     Card(
@@ -311,7 +312,7 @@ internal data class FavRow(
 )
 
 @Composable
-private fun HomeFavoritesCard(activity: ComponentActivity) {
+internal fun HomeFavoritesCard(activity: ComponentActivity, fill: Boolean = false) {
     var rows by remember { mutableStateOf<List<FavRow>?>(null) }
     // Atualiza a cada minuto e sempre que se volta à página inicial (favoritas podem ter mudado)
     LaunchedEffect(Unit) {
@@ -323,7 +324,7 @@ private fun HomeFavoritesCard(activity: ComponentActivity) {
         }
     }
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = if (fill) Modifier.fillMaxSize() else Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = CardBackground)
     ) {
@@ -461,39 +462,29 @@ private suspend fun cpRow(activity: ComponentActivity, entry: String): FavRow {
     )
     val now = CpTime.now()
     val stops = attempt { CpRepository.getTimetableWindow(code, now).stops } ?: return base.copy(note = "sem ligação")
-    // Próxima partida pela hora efetiva (prevista + atraso)
-    val next = stops.mapNotNull { timed ->
-        val at = timed.dateTimeOf(timed.stop.departureTime) ?: return@mapNotNull null
-        val effective = at.plusMinutes((timed.stop.delay ?: 0).coerceAtLeast(0).toLong())
-        if (effective.isBefore(now)) null else Triple(timed.stop, at, effective)
-    }.minByOrNull { it.third } ?: return base.copy(note = "sem partidas próximas")
+    // Próxima partida como no quadro da estação: pela hora a que parte mesmo, com a hora estimada pela CP
+    val next = com.example.metrotime.data.cp.CpBoard.board(stops, departures = true, now = now)
+        .firstOrNull { it.minutesLeft >= 0 } ?: return base.copy(note = "sem partidas próximas")
 
-    val (stop, at, effective) = next
-    val delay = stop.delay
-    val suppressed = stop.supression != null || delay == -1
-    val late = !suppressed && (delay ?: 0) >= 2
+    val stop = next.stop
+    val delay = next.delayMinutes
     val lateColor = if ((delay ?: 0) > 5) RED else YELLOW
     val service = CpService.shortName(stop.trainService?.code)
     val destination = formatStationName(stop.trainDestination?.designation ?: "?")
     val platform = stop.platform?.takeIf { it.isNotBlank() && it != "0" }?.let { " · Linha $it" } ?: ""
     return base.copy(
         subtitle = "$service ${stop.trainNumber} → $destination$platform",
-        main = (if (late) effective else at).format(HM),
+        main = next.shown,
         mainColor = when {
-            suppressed -> TextSecondaryDark
-            late -> lateColor
+            next.suppressed -> TextSecondaryDark
+            next.late && next.struck != null -> lateColor
             else -> Color.White
         },
-        struck = if (late) at.format(HM) else null,
-        note = when {
-            suppressed -> "Suprimido"
-            late -> "+$delay min"
-            delay == null -> "Previsto"
-            else -> "Na hora"
-        },
+        struck = next.struck,
+        note = next.status,
         noteColor = when {
-            suppressed -> RED
-            late -> lateColor
+            next.suppressed -> RED
+            next.late -> lateColor
             delay == null -> TextSecondaryDark
             else -> GREEN
         }
@@ -528,7 +519,7 @@ private fun HomeExplore(activity: ComponentActivity, metro: MetroNow, onOpenCate
         ) { onOpenCategory("Comboio") }
         ExploreTile(
             logo = R.drawable.bus_symbol,
-            tint = Color(0xFF00AEEF).copy(alpha = 0.18f),
+            tint = Color(0xFFFFC20E).copy(alpha = 0.16f),
             title = "Autocarros",
             subtitle = "Carris"
         ) { onOpenCategory("Autocarro") }
@@ -550,7 +541,7 @@ private fun RowScope.ExploreTile(
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = CardBackground)
     ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Box(
                 modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(tint),
                 contentAlignment = Alignment.Center
@@ -568,13 +559,18 @@ private fun RowScope.ExploreTile(
 @Composable
 private fun HomeShortcuts(activity: ComponentActivity) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        com.example.metrotime.ui.caderneta.CadernetaHomeCard(activity)
+        Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ShortcutTile(MapIcon, GREEN, "Mapa ao vivo") { activity.startActivity(Intent(activity, LiveMapActivity::class.java)) }
             ShortcutTile(ChartIcon, Color(0xFF60A5FA), "Estatísticas") { activity.startActivity(Intent(activity, StatsActivity::class.java)) }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ShortcutTile(Icons.Filled.Star, Color(0xFFFFD54F), "Favoritos") { activity.startActivity(Intent(activity, FavoritesActivity::class.java)) }
             ShortcutTile(Icons.Filled.Person, Color(0xFFC4B5FD), "Amigos") { activity.startActivity(Intent(activity, FriendsActivity::class.java)) }
+        }
+        Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ShortcutTile(PinIcon, Color(0xFFFF8A65), "Perto de mim") { activity.startActivity(Intent(activity, NearbyActivity::class.java)) }
+            ShortcutTile(RouteIcon, MetrotimeBlue, "Planear viagem") { activity.startActivity(TripPlannerActivity.newIntent(activity)) }
         }
     }
 }
@@ -583,17 +579,18 @@ private fun HomeShortcuts(activity: ComponentActivity) {
 private fun RowScope.ShortcutTile(icon: ImageVector, tint: Color, label: String, onClick: () -> Unit) {
     Card(
         onClick = onClick,
-        modifier = Modifier.weight(1f).height(52.dp),
+        // Com letra grande o nome passa para 2 linhas (e os dois da fila crescem juntos) em vez de ficar cortado
+        modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 52.dp),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = CardBackground)
     ) {
         Row(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+            modifier = Modifier.fillMaxSize().heightIn(min = 52.dp).padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
-            Text(label, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(label, color = Color.White, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
     }
 }

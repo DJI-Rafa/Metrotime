@@ -48,8 +48,77 @@ function isActive({ status, runDate, delay, hasGps }, today) {
   return true;
 }
 
+/** "HH:mm:ss" ou "HH:mm" → segundos desde a meia-noite (null se não for uma hora). */
+function secondsOf(t) {
+  if (t === undefined || t === null || t === "") return null;
+  const p = String(t).split(":").map(Number);
+  if (p.length < 2 || p.some((x) => !Number.isFinite(x))) return null;
+  return p[0] * 3600 + p[1] * 60 + (p[2] || 0);
+}
+
+/** Segundos desde a meia-noite, agora, em Lisboa. */
+function lisbonSeconds(now = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Lisbon", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+  }).formatToParts(now);
+  const get = (type) => Number(parts.find((x) => x.type === type).value);
+  return (get("hour") % 24) * 3600 + get("minute") * 60 + get("second");
+}
+
+/** Há quanto tempo foi [sec] (segundos do dia), visto de [nowSec]; perto da meia-noite conta o dia anterior. */
+function ageSeconds(sec, nowSec) {
+  let d = nowSec - sec;
+  if (d > 43200) d -= 86400;
+  if (d <= -43200) d += 86400;
+  return d;
+}
+
+/**
+ * A última passagem registada pela CP: o ruicosta traz em data.stops a hora real a que o comboio passou em cada
+ * ponto do percurso (também nos apeadeiros onde não para), com segundos. Fica a mais recente que já aconteceu
+ * (as que estão no futuro são previsões). Dá a estação, a hora "HH:mm:ss" e se já saiu de lá ([left]): parado
+ * numa estação, a CP regista só a chegada; a partida aparece quando sai (de passagem, as duas iguais).
+ */
+function lastPassage(stops, nowSec = lisbonSeconds()) {
+  let best = null;
+  for (const code of Object.keys(stops || {})) {
+    const s = stops[code] || {};
+    for (const [t, left] of [[s.arrival, false], [s.departure, true]]) {
+      const sec = secondsOf(t);
+      if (sec === null) continue;
+      const age = ageSeconds(sec, nowSec);
+      // Horas no futuro são previsões (5 s de folga para relógios diferentes)
+      if (age < -5) continue;
+      // Na mesma hora, a partida ganha (de passagem: chegou e saiu)
+      if (!best || age < best.age || (age === best.age && left && !best.left)) best = { code, time: String(t), age, left };
+    }
+  }
+  return best ? { code: best.code, time: best.time, left: best.left } : null;
+}
+
+/**
+ * As paragens comerciais do comboio (fixed.trainStops), compactas, para a app calcular onde vai cada comboio:
+ * "AAAA-MM-DD|código,chegada,partida,suprimida;…" com as horas do horário "HH:mm" (vazias quando não há).
+ */
+function routeOf(fixed, runDate) {
+  const stops = (fixed && fixed.trainStops) || [];
+  if (stops.length < 2 || !runDate) return null;
+  const parts = [];
+  for (const s of stops) {
+    const code = s && s.station && s.station.code;
+    if (!code) return null;
+    parts.push([code, s.arrival || "", s.departure || "", s.supression ? 1 : 0].join(","));
+  }
+  return `${String(runDate).slice(0, 10)}|${parts.join(";")}`;
+}
+
+/** Chave de uma amostra em cp_samples: a hora UTC ao minuto, ordenável ("2026-11-23T13-00Z"). */
+function sampleKey(date) {
+  return date.toISOString().slice(0, 16).replace(":", "-") + "Z";
+}
+
 /** Formato da API comboios.ruicosta.pt/api/cache/trains (objeto indexado por comboio). */
-function fromRuicosta(data) {
+function fromRuicosta(data, nowSec = lisbonSeconds()) {
   const vehicles = [];
   const suppressed = [];
   for (const key of Object.keys(data || {})) {
@@ -80,6 +149,8 @@ function fromRuicosta(data) {
     const stops = (train.fixed && train.fixed.trainStops) || [];
     const first = stops.length ? stops[0] : null;
     const last = stops.length ? stops[stops.length - 1] : null;
+    const pass = lastPassage(train.data && train.data.stops, nowSec);
+    const route = routeOf(train.fixed, trainData.runDate);
 
     vehicles.push({
       ...base,
@@ -95,6 +166,11 @@ function fromRuicosta(data) {
       originETA: first ? str(first.ETD || first.ETA) : null,
       destinationTime: last ? str(last.arrival || last.departure) : null,
       destinationETA: last ? str(last.ETA || last.ETD) : null,
+      passCode: pass ? pass.code : null,
+      passTime: pass ? pass.time : null,
+      passLeft: pass ? pass.left : null,
+      // Só para cp_routes (o buildSnapshot tira-o do veículo)
+      ...(route ? { route } : {}),
     });
   }
   return { vehicles, suppressed };
@@ -131,9 +207,56 @@ function fromComboiosLive(json) {
       originETA: null,
       destinationTime: null,
       destinationETA: null,
+      // Só quando vem (o Firebase não aceita undefined)
+      ...(Number.isFinite(v.bearing) ? { bearing: Math.round(v.bearing) } : {}),
     });
   }
   return { vehicles, suppressed };
+}
+
+/**
+ * Junta as duas fontes: os comboios do ruicosta ([base], com as horas de origem e destino) com o que vem fresco
+ * do comboios.live ([live]): posição e a hora dela, rumo, estado, última estação e atraso — tudo da mesma leitura,
+ * para não se misturar uma posição nova com uma última estação velha. Só se junta o mesmo comboio no mesmo dia;
+ * os que só o comboios.live tem também entram (o buildSnapshot escolhe se houver dois com o mesmo número).
+ */
+function overlayLive(base, live) {
+  const day = (d) => (d ? String(d).slice(0, 10) : "");
+  const byKey = new Map();
+  for (const l of live.vehicles) byKey.set(`${l.trainNumber}|${day(l.runDate)}`, l);
+  const used = new Set();
+  const vehicles = base.vehicles.map((v) => {
+    const key = `${v.trainNumber}|${day(v.runDate)}`;
+    const l = byKey.get(key);
+    if (!l) return v;
+    used.add(key);
+    return {
+      ...v,
+      delay: l.delay,
+      lastStation: l.lastStation || v.lastStation,
+      latitude: l.latitude || v.latitude,
+      longitude: l.longitude || v.longitude,
+      status: l.status || v.status,
+      hasDisruptions: l.hasDisruptions || v.hasDisruptions,
+      timestamp: l.timestamp || v.timestamp,
+      ...(l.bearing !== undefined ? { bearing: l.bearing } : {}),
+    };
+  });
+  for (const [key, l] of byKey) if (!used.has(key)) vehicles.push(l);
+  const cancelled = new Set(base.suppressed.map((s) => s.trainNumber));
+  const suppressed = base.suppressed.concat(live.suppressed.filter((s) => !cancelled.has(s.trainNumber)));
+  return { vehicles, suppressed };
+}
+
+/**
+ * O mesmo número em dois dias (perto da meia-noite): fica o que está a circular e, entre iguais, o mais recente.
+ * Antes ficava sempre o mais recente, e o de hoje ainda por partir tirava do mapa o de ontem que ia a meio.
+ */
+function preferVehicle(a, b) {
+  const ra = RUNNING.has(a.status);
+  const rb = RUNNING.has(b.status);
+  if (ra !== rb) return ra;
+  return (a.runDate || "") > (b.runDate || "");
 }
 
 /** Metros entre dois pontos (aproximação plana, suficiente a estas distâncias). */
@@ -163,22 +286,30 @@ function bearing(lat1, lon1, lat2, lon2) {
 function buildSnapshot({ vehicles, suppressed }, today, now = Date.now(), previous = {}) {
   const vehiclesMap = {};
   const positions = {};
-  for (const v of vehicles) {
+  const routesMap = {};
+  for (const withRoute of vehicles) {
+    // O percurso não vai no veículo (cp_vehicles é lido muitas vezes): vai para cp_routes
+    const { route, ...v } = withRoute;
     const hasGps = Boolean(v.latitude && v.longitude);
     if (!isActive({ status: v.status, runDate: v.runDate, delay: v.delay, hasGps }, today)) continue;
-    // O mesmo número em dois dias (perto da meia-noite): fica o mais recente
+    // O mesmo número em dois dias (perto da meia-noite): fica o que está a circular
     const prev = vehiclesMap[v.trainNumber];
-    if (prev && (prev.runDate || "") >= (v.runDate || "")) continue;
+    if (prev && !preferVehicle(v, prev)) continue;
     vehiclesMap[v.trainNumber] = v;
     delete positions[v.trainNumber];
+    if (route) routesMap[v.trainNumber] = route;
+    else delete routesMap[v.trainNumber];
     if (hasGps) {
       const lat = parseFloat(v.latitude);
       const lon = parseFloat(v.longitude);
       if (Number.isFinite(lat) && Number.isFinite(lon) && lat !== 0 && lon !== 0) {
+        // ts: a hora da posição (comboios.live); sem ela, a desta leitura
         const position = { lat, lon, ts: v.timestamp || now };
-        // Rumo: só quando andou mais de 50 m desde a última posição; senão mantém o anterior
+        // Rumo: o da fonte; senão, só quando andou mais de 50 m desde a última posição (senão mantém o anterior)
         const prev = previous && previous[v.trainNumber];
-        if (prev && Number.isFinite(prev.lat) && Number.isFinite(prev.lon)) {
+        if (Number.isFinite(v.bearing)) {
+          position.bearing = v.bearing;
+        } else if (prev && Number.isFinite(prev.lat) && Number.isFinite(prev.lon)) {
           if (metres(prev.lat, prev.lon, lat, lon) > 50) position.bearing = bearing(prev.lat, prev.lon, lat, lon);
           else if (Number.isFinite(prev.bearing)) position.bearing = prev.bearing;
         }
@@ -189,7 +320,10 @@ function buildSnapshot({ vehicles, suppressed }, today, now = Date.now(), previo
   }
   const suppressedMap = {};
   for (const s of suppressed) suppressedMap[s.trainNumber] = s;
-  return { vehiclesMap, positions, suppressedMap };
+  return { vehiclesMap, positions, suppressedMap, routesMap };
 }
 
-module.exports = { lisbonToday, addDays, isActive, fromRuicosta, fromComboiosLive, buildSnapshot, bearing, metres };
+module.exports = {
+  lisbonToday, addDays, isActive, fromRuicosta, fromComboiosLive, overlayLive, preferVehicle, buildSnapshot, bearing, metres,
+  secondsOf, lisbonSeconds, ageSeconds, lastPassage, routeOf, sampleKey,
+};

@@ -40,6 +40,7 @@ import com.example.metrotime.data.history.TripStats
 import com.example.metrotime.data.intOrNull
 import com.example.metrotime.data.stringOrNull
 import com.example.metrotime.ui.theme.*
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import java.time.LocalDate
 import java.time.ZoneId
@@ -371,6 +372,36 @@ private fun StreakCard(streak: StatsCalc.Streak) {
 }
 
 /** Linhas: quadrado na cor da linha (CP a verde), nome, viagens e uma barra em relação à mais usada. */
+/** Os distintivos de um amigo, dos mais raros para os mais comuns, numa fila que se arrasta para o lado. */
+@Composable
+private fun FriendBadges(badges: List<Pair<com.example.metrotime.data.caderneta.BadgeDef, String>>) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = CardBackground)
+    ) {
+        androidx.compose.foundation.lazy.LazyRow(
+            Modifier.fillMaxWidth().padding(vertical = 12.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            items(badges.size) { i ->
+                val (def, label) = badges[i]
+                Column(Modifier.width(74.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    com.example.metrotime.ui.caderneta.BadgeArt(
+                        def.id, def.tier, label, locked = false, modifier = Modifier.size(60.dp), animate = false,
+                        description = "${def.name}, ${def.tier.title}"
+                    )
+                    Text(
+                        def.name, color = Color.White, fontSize = 11.sp, lineHeight = 13.sp,
+                        textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun LinesCard(lines: List<StatsCalc.LineCount>) {
     val max = (lines.maxOfOrNull { it.count } ?: 0).coerceAtLeast(1)
@@ -694,11 +725,19 @@ private fun friendStats(snap: com.google.firebase.database.DataSnapshot): TripSt
 private fun FriendStatsScreen(activity: ComponentActivity, friendUid: String, friendName: String) {
     var stats by remember { mutableStateOf<TripStats?>(null) }
     var failed by remember { mutableStateOf(false) }
+    var badges by remember { mutableStateOf<List<Pair<com.example.metrotime.data.caderneta.BadgeDef, String>>>(emptyList()) }
     val myTotal = remember { TripHistoryManager.trips(activity).size }
     val today = remember { LocalDate.now(ZONE) }
     val first = friendName.split(" ").first()
 
     LaunchedEffect(friendUid) {
+        // Os distintivos do amigo (do Firebase), dos mais raros para os mais comuns
+        launch {
+            val earned = com.example.metrotime.data.caderneta.BadgeCloud.of(friendUid) ?: return@launch
+            badges = earned.days.keys
+                .mapNotNull { id -> com.example.metrotime.data.caderneta.BadgeCatalog.byId[id]?.let { it to (earned.labels[id] ?: it.label) } }
+                .sortedWith(compareByDescending<Pair<com.example.metrotime.data.caderneta.BadgeDef, String>> { it.first.tier.ordinal }.thenBy { it.first.name })
+        }
         // Leitura tolerante; numa falha mostra o aviso (antes mostrava as MINHAS estatísticas como se fossem do amigo)
         try {
             stats = friendStats(
@@ -751,6 +790,13 @@ private fun FriendStatsScreen(activity: ComponentActivity, friendUid: String, fr
                     )
                 }
                 val lines = friendLines(s.topLines)
+                if (badges.isNotEmpty()) {
+                    item(key = "badges") {
+                        HomeSection("Distintivos de $first · ${badges.size} de ${com.example.metrotime.data.caderneta.BadgeCatalog.ALL.size}") {
+                            FriendBadges(badges)
+                        }
+                    }
+                }
                 if (lines.isNotEmpty()) item(key = "lines") { HomeSection("Linhas que $first mais usa") { LinesCard(lines) } }
                 if (s.topStations.isNotEmpty()) {
                     item(key = "stations") {

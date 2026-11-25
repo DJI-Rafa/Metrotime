@@ -99,6 +99,11 @@ class SettingsActivity : ComponentActivity() {
             }
         }
 
+        // Primeira abertura desta versão: a intro das novidades por cima
+        if (savedInstanceState == null && com.example.metrotime.ui.intro.IntroActivity.shouldShow(this)) {
+            startActivity(com.example.metrotime.ui.intro.IntroActivity.newIntent(this))
+        }
+
         // Let Compose draw the home screen before starting background work that can
         // contend for the main thread and CPU during the opening animation.
         lifecycleScope.launch {
@@ -364,6 +369,13 @@ fun SettingsScreen(activity: ComponentActivity) {
                             }
                         )
                         DropdownMenuItem(
+                            text = { Text("Novidades", color = Color.White) },
+                            onClick = {
+                                showMenu = false
+                                activity.startActivity(com.example.metrotime.ui.intro.IntroActivity.newIntent(activity))
+                            }
+                        )
+                        DropdownMenuItem(
                             text = { Text("Terminar sessão", color = Color(0xFFFF8A7D)) },
                             onClick = {
                                 showMenu = false
@@ -545,13 +557,8 @@ fun SettingsScreen(activity: ComponentActivity) {
         if (activeCategory == null) {
             HomeContent(activity, animVisible = animVisible, animate = !homeEntrancePlayed) { activeCategory = it }
         } else {
-            Column(modifier = Modifier.fillMaxSize()) {
-                when (activeCategory) {
-                    "Metro" -> MetroTabContent(activity)
-                    "Comboio" -> ComboioTabContent(activity)
-                    "Autocarro" -> BusTabContent(activity)
-                }
-            }
+            // Metro, Comboios e Autocarros lado a lado, a deslizar (o título e os avisos seguem o que está à vista)
+            CategoryPager(activity, activeCategory ?: "Metro") { activeCategory = it }
         }
     }
 }
@@ -1247,6 +1254,59 @@ fun AppSettingsDialog(activity: ComponentActivity, onDismiss: () -> Unit) {
                     }
                 }
 
+                // ── Notificação permanente: discreta por omissão; os tempos do metro são opcionais ──
+                item {
+                    var liveMetro by remember { mutableStateOf(com.example.metrotime.prefs.Prefs.isLiveMetroNotification(activity)) }
+                    Spacer(modifier = Modifier.height(20.dp))
+                    Text("Notificação", color = Color.White, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Tempos do metro na notificação", color = Color.White, fontSize = 15.sp)
+                            Text(
+                                if (liveMetro) "Os próximos metros da estação mais perto, também no ecrã de bloqueio."
+                                else "Desligado: fica só uma notificação discreta, que podes esconder.",
+                                color = Color.LightGray,
+                                fontSize = 12.sp
+                            )
+                        }
+                        Switch(
+                            checked = liveMetro,
+                            onCheckedChange = { enabled ->
+                                liveMetro = enabled
+                                com.example.metrotime.prefs.Prefs.setLiveMetroNotification(activity, enabled)
+                                // Troca já a notificação (o serviço volta a arrancar com a nova)
+                                com.example.metrotime.work.WidgetUpdateService.requestFetch(activity, fromUi = true)
+                            },
+                            colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF3B82F6), checkedTrackColor = Color(0xFF3B82F6).copy(alpha = 0.5f))
+                        )
+                    }
+                    if (!liveMetro) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            "Esconder a notificação discreta ›",
+                            color = Color(0xFF60A5FA),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable {
+                                    runCatching { activity.startActivity(com.example.metrotime.work.WidgetUpdateService.backgroundChannelSettings(activity)) }
+                                }
+                                .padding(vertical = 4.dp)
+                        )
+                        Text(
+                            "Desliga a categoria \"Em segundo plano\": os widgets, os avisos e a partilha continuam a funcionar.",
+                            color = Color.LightGray,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+
                 // ── Alertas de perturbação ──
                 item {
                     var metroLines by remember { mutableStateOf(com.example.metrotime.prefs.Prefs.getMetroAlertLines(activity)) }
@@ -1377,6 +1437,21 @@ fun AppSettingsDialog(activity: ComponentActivity, onDismiss: () -> Unit) {
                             
                             Text("Área de Administrador", color = Color.Yellow, fontWeight = FontWeight.Bold)
                             Spacer(modifier = Modifier.height(16.dp))
+
+                            // ── Debug ──
+                            Button(
+                                onClick = { activity.startActivity(DebugActivity.newIntent(activity)) },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3B82F6))
+                            ) {
+                                Text("Debug da app", color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "Ao vivo: serviço e localização, em que metro e em que comboio estás, viagens e distintivos.",
+                                color = Color.Gray, fontSize = 12.sp
+                            )
+                            Spacer(modifier = Modifier.height(24.dp))
 
                             // ── Global Alert ──
                             Text("Alerta Global", color = Color.White, fontWeight = FontWeight.Bold)
@@ -1568,10 +1643,12 @@ fun AppSettingsDialog(activity: ComponentActivity, onDismiss: () -> Unit) {
                                         
                                         for (uid in uidsToReset) {
                                             db.getReference("user_stats").child(uid).removeValue()
-                                            
+                                            db.getReference("user_badges").child(uid).removeValue()
+
                                             // Se o admin resetar a si próprio, limpa a memória local
                                             if (uid == com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid) {
                                                 com.example.metrotime.data.history.TripHistoryManager.clearHistory(activity)
+                                                com.example.metrotime.data.caderneta.CadernetaRepository.reset(activity)
                                             }
                                         }
                                         android.widget.Toast.makeText(activity, "Estatísticas de ${uidsToReset.size} utilizadores repostas a zero!", android.widget.Toast.LENGTH_LONG).show()

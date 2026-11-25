@@ -94,6 +94,8 @@ class CpStationActivity : ComponentActivity() {
 @Composable
 fun CpStationScreen(activity: ComponentActivity, stationCode: String, stationName: String) {
     var timedStops by remember { mutableStateOf<List<CpTimedStop>>(emptyList()) }
+    // Sem a CP: hora (ms) da última resposta boa, mostrada com os atrasos pelo GPS
+    var fallbackSince by remember { mutableStateOf<Long?>(null) }
     var stationMessages by remember { mutableStateOf<List<String>>(emptyList()) }
     var stationInfo by remember { mutableStateOf<CpStationInfo?>(null) }
     var notices by remember { mutableStateOf<List<CpNotice>>(emptyList()) }
@@ -193,7 +195,8 @@ fun CpStationScreen(activity: ComponentActivity, stationCode: String, stationNam
                     stationMessages = result.messages
                     errorMsg = null
                     refreshFailed = false
-                    lastUpdated = System.currentTimeMillis()
+                    fallbackSince = if (result.offline) result.savedAt else null
+                    lastUpdated = if (result.offline) result.savedAt ?: System.currentTimeMillis() else System.currentTimeMillis()
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -220,7 +223,10 @@ fun CpStationScreen(activity: ComponentActivity, stationCode: String, stationNam
             val at = timed.dateTimeOf(timeStr) ?: return@mapNotNull null
             if (!CpTimetableWindow.isInWindow(at.toLocalDate(), at.toLocalTime(), stop.delay, now)) return@mapNotNull null
             Pair(timed, at)
-        }.sortedBy { it.second }
+        }.sortedWith(
+            // Pela hora a que parte (ou chega) mesmo: um comboio atrasado passa para depois dos que saem antes
+            compareBy<Pair<CpTimedStop, java.time.LocalDateTime>>({ (timed, at) -> CpBoard.effectiveOf(timed, at, tabMode == "Partidas") }, { it.second })
+        )
     }
     // Filtros: só os serviços e sentidos que existem nesta estação
     val servicesHere = remember(tabStops) {
@@ -405,8 +411,12 @@ fun CpStationScreen(activity: ComponentActivity, stationCode: String, stationNam
                                 val seconds = ((maxOf(clockMillis, lastUpdated) - lastUpdated) / 1000).coerceAtLeast(0)
                                 val age = if (seconds < 60) "há ${seconds}s" else "há ${seconds / 60} min"
                                 Text(
-                                    if (refreshFailed) "⚠ Sem ligação — horários de $age" else "Atualizado $age",
-                                    color = if (refreshFailed) Color(0xFFFFB74D) else Color.Gray,
+                                    when {
+                                        refreshFailed -> "⚠ Sem ligação — horários de $age"
+                                        fallbackSince != null -> "⚠ A CP não responde — horários de $age, atrasos pelo GPS dos comboios"
+                                        else -> "Atualizado $age"
+                                    },
+                                    color = if (refreshFailed || fallbackSince != null) Color(0xFFFFB74D) else Color.Gray,
                                     fontSize = 11.sp,
                                     modifier = Modifier.padding(start = 4.dp)
                                 )
@@ -447,17 +457,12 @@ fun CpStationScreen(activity: ComponentActivity, stationCode: String, stationNam
                             val stop = timed.stop
                             // As supressões do Firebase são do dia de hoje; não marcar comboios de amanhã
                             val isSuppressed = at.toLocalDate() == today && suppressedTrains.contains(stop.trainNumber)
-                            // Contagem decrescente pela hora efetiva (prevista + atraso)
-                            val effective = at.plusMinutes((stop.delay ?: 0).coerceAtLeast(0).toLong())
-                            val minutes = java.time.Duration.between(clock, effective).toMinutes()
-                            val countdown = when {
-                                isSuppressed || stop.supression != null -> null
-                                minutes <= 0 -> "agora"
-                                minutes < 60 -> "$minutes min"
-                                else -> null
-                            }
+                            // A mesma linha dos outros quadros e do ecrã do comboio (hora esperada, riscada, atraso)
+                            val entry = CpBoard.entry(timed, tabMode == "Partidas", clock)
+                            val countdown = if (isSuppressed) null else entry?.countdown
                             CpTimetableCard(
                                 stop = stop,
+                                entry = entry,
                                 isSuppressed = isSuppressed,
                                 isDeparture = tabMode == "Partidas",
                                 dayLabel = if (at.toLocalDate().isAfter(today)) "amanhã" else null,
@@ -722,6 +727,8 @@ fun CpServiceBadge(shortName: String, color: Color) {
 @Composable
 fun CpTimetableCard(
     stop: CpStationStop,
+    /** A linha do quadro ([CpBoard.entry]): as horas e o atraso iguais em todo o lado. */
+    entry: CpBoardEntry? = null,
     isSuppressed: Boolean,
     isDeparture: Boolean,
     dayLabel: String? = null,
@@ -731,15 +738,16 @@ fun CpTimetableCard(
     val serviceCode = stop.trainService?.code
     val serviceColor = getServiceColor(serviceCode)
     val shortName = getServiceShortName(serviceCode)
-    val delayMin = stop.delay ?: 0
-    val isActuallySuppressed = isSuppressed || stop.supression != null
+    val isActuallySuppressed = isSuppressed || stop.supression != null || entry?.suppressed == true
     // null = sem dados em tempo real ("Previsto"); 0 = confirmado a horas
-    val delayState = CpDelay.stateFromMinutes(stop.delay, isActuallySuppressed)
+    val delayValue = if (entry != null) entry.delayMinutes else stop.delay
+    val delayMin = delayValue ?: 0
+    val delayState = CpDelay.stateFromMinutes(delayValue, isActuallySuppressed)
 
     val scheduledTime = if (isDeparture) stop.departureTime else stop.arrivalTime
-    val estimatedTime = if (isDeparture) stop.etd else stop.eta
-    val scheduledDisplay = scheduledTime?.take(5) ?: "--:--"
-    val isDelayed = !isActuallySuppressed && delayMin > 0 && estimatedTime != null
+    val scheduledDisplay = entry?.struck ?: scheduledTime?.take(5) ?: "--:--"
+    val isDelayed = !isActuallySuppressed && (entry?.late ?: false)
+    val estimatedTime = entry?.shown
 
     val delayColor = when {
         isActuallySuppressed -> Color(0xFFFF5252)
@@ -749,7 +757,7 @@ fun CpTimetableCard(
     }
     val (statusText, statusColor) = when {
         isActuallySuppressed -> "Suprimido" to Color(0xFFFF5252)
-        delayMin > 0 -> "+$delayMin min" to delayColor
+        delayMin >= 1 -> "+$delayMin min" to delayColor
         delayState == CpDelayState.SCHEDULED -> "Previsto" to Color.Gray
         else -> "Na hora" to Color(0xFF4CAF50)
     }

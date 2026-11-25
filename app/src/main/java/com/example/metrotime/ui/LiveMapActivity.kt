@@ -27,9 +27,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
@@ -53,9 +57,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.example.metrotime.data.MapConfiguration
-import com.example.metrotime.data.TrainPosition
 import com.example.metrotime.ui.theme.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.debounce
 import org.maplibre.android.MapLibre
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.geometry.LatLng
@@ -86,11 +90,27 @@ class LiveMapActivity : ComponentActivity() {
     private var mapLibreMap: MapLibreMap? = null
     private var styleReady = false
 
+    /** Desenha os metros a cada imagem (pontos de longe, carruagens de perto, sem saltos). */
+    private val metroRenderer = MetroRenderer()
+    private val cpRenderer = CpTrainsRenderer()
+    /** Enquanto a câmara anima para um metro, o "seguir" não a interrompe. */
+    private var followHoldUntil = 0L
+
+    /** Espera pela próxima imagem do ecrã (vsync): o desenho dos metros fica ao ritmo do ecrã, sem solavancos. */
+    private suspend fun awaitVsync(): Long = kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+        val callback = android.view.Choreographer.FrameCallback { nanos ->
+            if (cont.isActive) cont.resumeWith(Result.success(nanos))
+        }
+        android.view.Choreographer.getInstance().postFrameCallback(callback)
+        cont.invokeOnCancellation { android.view.Choreographer.getInstance().removeFrameCallback(callback) }
+    }
+
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted: Boolean ->
         if (isGranted) {
             viewModel.startLocationTracking()
+            showMyLocation()
         }
         // O serviço só arranca depois da resposta: com o tipo "location" sem permissão o Android 14
         // lançava SecurityException e fechava a app
@@ -99,6 +119,7 @@ class LiveMapActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        warmUpLocation(applicationContext)
 
         requestPermissionLauncher.launch(android.Manifest.permission.ACCESS_FINE_LOCATION)
 
@@ -160,7 +181,7 @@ class LiveMapActivity : ComponentActivity() {
                     setupMapLayers(this@LiveMapActivity, style)
 
                     // Race condition fix: draw everything immediately when style is loaded
-                    updateTrainMarkers(map, viewModel.trains.value)
+                    metroRenderer.cutActive = applyMetroDisruptions(map, viewModel.metroStatuses.value, viewModel.metroTracks)
                     updateFriendMarkers(this@LiveMapActivity, map, viewModel.friendLocations.value)
                     val routeColor = viewModel.selectedBusRoute.value?.color
                     updateBusMarkers(map, viewModel.liveBuses.value, this@LiveMapActivity, routeColor, viewModel.selectedLiveBus.value?.bus?.vehicleId)
@@ -168,13 +189,32 @@ class LiveMapActivity : ComponentActivity() {
                     updateBusRouteLine(map, viewModel.busRouteShape.value, routeColor)
                     updateAllBusStops(map, viewModel.allBusStops.value)
                     updateCpTrains(this@LiveMapActivity, map, viewModel.cpTrains.value, viewModel.selectedCpNumber.value)
+                    // (a Fertagus entra no primeiro desenho do CpTrainsRenderer, logo a seguir)
+                    val regional = viewModel.selectedRegional.value
+                    updateRegionalVehicles(
+                        map, this@LiveMapActivity,
+                        if (viewModel.isBusMode.value) emptyList() else viewModel.regionalVehicles.value,
+                        regional?.vehicle?.key
+                    )
+                    updateRegionalRoute(map, regional?.trip, regional?.vehicle?.color)
                     applyMapFilters(map, viewModel.mapFilters.value)
+                    // A tua localização: depois das outras camadas, para o ponto azul ficar por cima de tudo
+                    showMyLocation()
                     // Rede ferroviária (traçados reais) carregada fora da thread principal
                     lifecycleScope.launch {
                         val network = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                             runCatching { buildCpNetwork(this@LiveMapActivity) }.getOrNull()
                         }
                         if (network != null && styleReady) applyCpNetwork(map, network)
+                        // (o texto da rede já vem feito: o mapa só o lê)
+                        // Metro do Porto: linhas e estações como as de Lisboa (a rede vem do pacote MDP)
+                        val porto = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                            runCatching {
+                                viewModel.metroTracks
+                                com.example.metrotime.data.metro.PortoMetro.network?.let { buildPortoMetroFeatures(it) }
+                            }.getOrNull()
+                        }
+                        if (porto != null && styleReady) applyPortoMetro(map, porto)
                     }
 
                     viewModel.selectedLiveBus.value?.bus?.let { bus ->
@@ -188,28 +228,49 @@ class LiveMapActivity : ComponentActivity() {
                     e.printStackTrace()
                 }
 
-                // Wire up train tap
-                val tapLayerIds: Array<String> =
-                    LINE_NAMES.map { "trains-layer-$it" }.toTypedArray()
+                map.addOnCameraIdleListener {
+                    val c = map.cameraPosition
+                    c.target?.let { viewModel.setMapCamera(it.latitude, it.longitude, c.zoom) }
+                    if (styleReady) refreshRegionalVehicles(map, this@LiveMapActivity)
+                }
+                // Mexer no mapa com os dedos deixa de seguir o metro (o chip "Seguir o metro" volta a seguir)
+                map.addOnCameraMoveStartedListener { reason ->
+                    if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE && viewModel.followMetro.value != null) {
+                        viewModel.setFollowPaused(true)
+                    }
+                }
                 map.addOnMapClickListener { point ->
                     val screen = map.projection.toScreenLocation(point)
                     // Comboios CP primeiro (ficam por cima de tudo); a área de toque é a etiqueta
                     val touch = android.graphics.RectF(screen.x - 24f, screen.y - 24f, screen.x + 24f, screen.y + 24f)
-                    val cpHits = map.queryRenderedFeatures(touch, "cp-trains")
+                    val cpHits = map.queryRenderedFeatures(touch, "cp-trains", "cp-train-dots")
                     if (cpHits.isNotEmpty()) {
-                        cpHits[0].getStringProperty("number")?.toIntOrNull()?.let { viewModel.selectCpTrain(it) }
+                        // A Fertagus vem com a chave do veículo (abre o painel das outras redes, com o horário)
+                        val key = cpHits[0].takeIf { it.hasProperty("key") }?.getStringProperty("key")
+                        if (key != null) viewModel.selectRegional(key)
+                        else cpHits[0].getStringProperty("number")?.toIntOrNull()?.let { viewModel.selectCpTrain(it) }
                         return@addOnMapClickListener true
                     }
-                    for (layerId in tapLayerIds) {
-                        val hits = map.queryRenderedFeatures(screen, layerId)
-                        if (hits.isNotEmpty()) {
-                            val trainId = hits[0].getStringProperty("trainId") ?: continue
-                            val tapped = viewModel.trains.value.find { t -> t.id == trainId }
-                            viewModel.selectTrain(tapped)
-                            return@addOnMapClickListener true
-                        }
+                    // Outras redes: a pílula (de perto) ou o ponto (de longe), com a área de toque à volta do dedo
+                    val regionalReach = 18f * resources.displayMetrics.density
+                    val regionalTouch = android.graphics.RectF(screen.x - regionalReach, screen.y - regionalReach, screen.x + regionalReach, screen.y + regionalReach)
+                    val regionalKey = map.queryRenderedFeatures(regionalTouch, REGIONAL_VEHICLES_LAYER, REGIONAL_DOTS_LAYER)
+                        .firstNotNullOfOrNull { it.getStringProperty("key") }
+                    if (regionalKey != null) {
+                        viewModel.selectRegional(regionalKey)
+                        return@addOnMapClickListener true
                     }
-                    
+                    // Metros: as carruagens (de perto) ou o ponto (de longe); a área de toque é à volta do dedo
+                    val metroReach = 20f * resources.displayMetrics.density
+                    val metroTouch = android.graphics.RectF(screen.x - metroReach, screen.y - metroReach, screen.x + metroReach, screen.y + metroReach)
+                    val metroKey = map.queryRenderedFeatures(metroTouch, "metro-cars-layer", "metro-dots-layer")
+                        .mapNotNull { it.getStringProperty("key") }
+                        .firstOrNull()?.removePrefix("ghost|")
+                    if (metroKey != null && viewModel.onboard.value == null) {
+                        viewModel.selectMetro(metroKey)
+                        return@addOnMapClickListener true
+                    }
+
                     val friendHits = map.queryRenderedFeatures(screen, "friends-layer")
                     if (friendHits.isNotEmpty()) {
                         val friendName = friendHits[0].getStringProperty("name") ?: "Amigo"
@@ -248,7 +309,7 @@ class LiveMapActivity : ComponentActivity() {
 
                     // Estação do metro primeiro, só se o toque for mesmo no símbolo (as paragens à volta
                     // têm uma área de toque maior e ficavam com o toque)
-                    val stationHits = map.queryRenderedFeatures(screen, "stations-layer")
+                    val stationHits = map.queryRenderedFeatures(screen, "stations-layer", PORTO_STATIONS_LAYER)
                     if (stationHits.isNotEmpty()) {
                         val stationId = stationHits[0].getStringProperty("id") ?: return@addOnMapClickListener false
                         val stationName = stationHits[0].getStringProperty("name") ?: stationId
@@ -285,11 +346,91 @@ class LiveMapActivity : ComponentActivity() {
                     }
 
                     
-                    viewModel.selectTrain(null)
+                    if (viewModel.onboard.value == null) viewModel.selectMetro(null)
                     viewModel.selectStation(null)
                     viewModel.clearSelectedBusStop()
                     viewModel.selectCpTrain(null)
+                    viewModel.selectRegional(null)
+                    // Um toque no mapa fecha também o autocarro aberto (os painéis já não fecham por se puxar)
+                    viewModel.clearSelectedLiveBus()
                     false
+                }
+            }
+        }
+
+        // Os metros a cada imagem do ecrã (Choreographer), só com o mapa à frente: 60 por segundo enquanto se
+        // anima (seletor de tempo, seguir um metro), 30 de perto e 20 de longe quando só eles mexem
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                var lastNanos = 0L
+                var lastCpNanos = 0L
+                var locationAt = 0L
+                var skipped = 0
+                var detailed = false
+                var animating = false
+                var lastOffset = viewModel.metroOffsetMs.value
+                while (true) {
+                    val frameNanos = awaitVsync()
+                    val offset = viewModel.metroOffsetMs.value
+                    val followKey = viewModel.followMetro.value
+                    val busy = animating || offset != lastOffset || followKey != null
+                    val every = when {
+                        busy -> 1
+                        detailed -> 2
+                        else -> 3
+                    }
+                    if (++skipped < every) continue
+                    skipped = 0
+                    lastOffset = offset
+                    val dt = if (lastNanos == 0L) 1 / 60.0 else ((frameNanos - lastNanos) / 1e9).coerceIn(0.0, 0.5)
+                    lastNanos = frameNanos
+                    val map = mapLibreMap
+                    if (map == null || !styleReady) continue
+                    try {
+                        // Os comboios CP, cerca de 12 vezes por segundo (andam devagar no ecrã)
+                        val cpEvery = if (map.cameraPosition.zoom < CP_DOT_MAX_ZOOM) 500_000_000L else 80_000_000L
+                        if (frameNanos - lastCpNanos >= cpEvery) {
+                            val cpDt = if (lastCpNanos == 0L) 0.08 else ((frameNanos - lastCpNanos) / 1e9).coerceIn(0.0, 0.5)
+                            lastCpNanos = frameNanos
+                            val openKey = viewModel.selectedRegional.value?.vehicle?.key
+                            cpRenderer.render(
+                                this@LiveMapActivity, map, viewModel.cpTrains.value, viewModel.cpLive.value,
+                                viewModel.selectedCpNumber.value, System.currentTimeMillis(), cpDt,
+                                extra = viewModel.fertagusTrains.value.map { v ->
+                                    ExtraTrain(v.key, "FT", v.lat, v.lon, v.delaySeconds, v.key == openKey)
+                                }
+                            )
+                        }
+                        val mf = viewModel.mapFilters.value
+                        val frame = metroRenderer.render(
+                            map, viewModel.metroTrains.value, viewModel.metroTracks, System.currentTimeMillis(),
+                            offset, viewModel.selectedMetro.value, viewModel.onboard.value?.key,
+                            followKey, dt
+                        ) { metroLineShown(mf, it) }
+                        detailed = frame.detailed
+                        animating = frame.animating
+                        // A câmara vai atrás do metro seguido, sem saltos
+                        val nowEl = SystemClock.elapsedRealtime()
+                        val target = frame.follow
+                        val center = map.cameraPosition.target
+                        if (followKey != null && target != null && center != null && !viewModel.followPaused.value && nowEl > followHoldUntil) {
+                            val k = (dt * 4.0).coerceIn(0.0, 1.0)
+                            map.moveCamera(
+                                org.maplibre.android.camera.CameraUpdateFactory.newLatLng(
+                                    LatLng(center.latitude + (target.first - center.latitude) * k, center.longitude + (target.second - center.longitude) * k)
+                                )
+                            )
+                        }
+                        // A tua localização (o ponto azul), para a estação mais perto no cartão da noite
+                        if (nowEl - locationAt > 5_000L) {
+                            locationAt = nowEl
+                            runCatching {
+                                map.locationComponent.takeIf { it.isLocationComponentActivated }?.lastKnownLocation
+                            }.getOrNull()?.let { viewModel.setMyLocation(it.latitude, it.longitude) }
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
                 }
             }
         }
@@ -298,18 +439,50 @@ class LiveMapActivity : ComponentActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch {
-                    var lastTrainMarkerUpdateAt = 0L
-                    var lastTrainMarkerSignature = ""
-                    viewModel.trains.collect { trains ->
-                        if (styleReady) {
-                            val now = SystemClock.elapsedRealtime()
-                            val signature = trains.joinToString("|") { "${it.id}:${it.nextStationId}:${it.isGhost}" }
-                            if (signature != lastTrainMarkerSignature || now - lastTrainMarkerUpdateAt >= 3_000L) {
-                                lastTrainMarkerSignature = signature
-                                lastTrainMarkerUpdateAt = now
-                                mapLibreMap?.let { updateTrainMarkers(it, trains) }
+                    // Perturbações: o troço interrompido a cinzento
+                    viewModel.metroStatuses.collect { statuses ->
+                        if (styleReady) mapLibreMap?.let { metroRenderer.cutActive = applyMetroDisruptions(it, statuses, viewModel.metroTracks) }
+                    }
+                }
+                launch {
+                    // A bordo: o mapa aproxima-se e inclina-se para trás do teu metro; ao terminar volta a direito
+                    var wasOnboard = false
+                    viewModel.onboard.collect { board ->
+                        val map = mapLibreMap
+                        if (map != null && styleReady) {
+                            if (board != null && !wasOnboard) {
+                                val train = viewModel.metroTrain(board.key)
+                                val track = viewModel.metroTracks[board.line]
+                                val point = if (train != null && track != null) train.placeAt(System.currentTimeMillis(), track)?.let { track.point(it.s) } else null
+                                val camera = CameraPosition.Builder(map.cameraPosition).zoom(15.6).tilt(45.0)
+                                point?.let { camera.target(LatLng(it.first, it.second)) }
+                                followHoldUntil = SystemClock.elapsedRealtime() + 1_400L
+                                map.animateCamera(org.maplibre.android.camera.CameraUpdateFactory.newCameraPosition(camera.build()), 1_200)
+                            } else if (board == null && wasOnboard) {
+                                map.animateCamera(
+                                    org.maplibre.android.camera.CameraUpdateFactory.newCameraPosition(
+                                        CameraPosition.Builder(map.cameraPosition).tilt(0.0).zoom(14.0).build()
+                                    ), 900
+                                )
                             }
                         }
+                        wasOnboard = board != null
+                    }
+                }
+                launch {
+                    // "Seguir" no painel do metro: a câmara vai até ele (de perto) e depois acompanha-o
+                    viewModel.followMetro.collect { key ->
+                        val map = mapLibreMap ?: return@collect
+                        if (key == null || !styleReady || viewModel.onboard.value?.key == key) return@collect
+                        val train = viewModel.metroTrain(key) ?: return@collect
+                        val track = viewModel.metroTracks[train.line] ?: return@collect
+                        val p = train.placeAt(System.currentTimeMillis() + viewModel.metroOffsetMs.value, track) ?: return@collect
+                        val at = track.point(p.s)
+                        followHoldUntil = SystemClock.elapsedRealtime() + 1_000L
+                        map.animateCamera(
+                            org.maplibre.android.camera.CameraUpdateFactory.newLatLngZoom(LatLng(at.first, at.second), maxOf(map.cameraPosition.zoom, 15.0)),
+                            850
+                        )
                     }
                 }
                 launch {
@@ -341,19 +514,17 @@ class LiveMapActivity : ComponentActivity() {
                     }
                 }
                 launch {
-                    viewModel.allBusStops.collect { allStops ->
+                    // As paragens chegam aos bocados ao abrir (Carris, outras redes, CM, Norte e Centro): um só desenho
+                    @OptIn(kotlinx.coroutines.FlowPreview::class)
+                    viewModel.allBusStops.debounce(400).collect { allStops ->
                         if (styleReady) {
                             mapLibreMap?.let { updateAllBusStops(it, allStops) }
                         }
                     }
                 }
                 // Comboios CP: etiquetas, percurso do comboio aberto, filtros e pedidos de câmara
-                launch {
-                    kotlinx.coroutines.flow.combine(viewModel.cpTrains, viewModel.selectedCpNumber) { t, s -> t to s }
-                        .collect { (trains, selected) ->
-                            if (styleReady) mapLibreMap?.let { updateCpTrains(this@LiveMapActivity, it, trains, selected) }
-                        }
-                }
+                // Os comboios CP são desenhados a cada imagem (CpTrainsRenderer, no ciclo do ecrã), todos com a mesma
+                // conta do painel: o comboio aberto já não salta para outro sítio ao tocar nele
                 launch {
                     kotlinx.coroutines.flow.combine(viewModel.cpTrip, viewModel.selectedCpTrain) { s, t -> s to t }
                         .collect { (state, train) ->
@@ -366,6 +537,56 @@ class LiveMapActivity : ComponentActivity() {
                 launch {
                     viewModel.mapFilters.collect { f ->
                         if (styleReady) mapLibreMap?.let { applyMapFilters(it, f) }
+                    }
+                }
+                launch {
+                    // Outras redes: os veículos (escondidos com uma linha de autocarro aberta) e o traçado do aberto
+                    kotlinx.coroutines.flow.combine(
+                        viewModel.regionalVehicles, viewModel.selectedRegional, viewModel.isBusMode, viewModel.selectedLiveBus
+                    ) { vehicles, selected, busMode, liveBus ->
+                        // Um autocarro da Carris/CM aberto a partir do ponto fica destacado nele
+                        val cityKey = liveBus?.bus?.let { b ->
+                            val op = if (b.operator == "carris_metropolitana") com.example.metrotime.data.regional.RegionalOperators.CM
+                            else com.example.metrotime.data.regional.RegionalOperators.CARRIS
+                            "${op.key}|${b.vehicleId}"
+                        }
+                        Triple(vehicles, selected?.let { it to it.vehicle.key } ?: (null to cityKey), busMode)
+                    }
+                        .collect { (vehicles, sel, busMode) ->
+                            val selected = sel.first
+                            val selectedKey = sel.second
+                            val map = mapLibreMap ?: return@collect
+                            if (!styleReady) return@collect
+                            // O aberto aparece sempre, mesmo que os filtros o escondam (aberto a partir de uma paragem)
+                            val open = selected?.vehicle?.takeIf { s ->
+                                vehicles.none { it.key == s.key } && viewModel.fertagusTrains.value.none { it.key == s.key }
+                            }
+                            updateRegionalVehicles(map, this@LiveMapActivity, if (busMode) emptyList() else vehicles + listOfNotNull(open), selectedKey)
+                            updateRegionalRoute(map, selected?.trip, selected?.vehicle?.color)
+                        }
+                }
+                launch {
+                    // Ao abrir um veículo de outra rede, o mapa vai até ele (centrado acima do painel)
+                    var lastKey: String? = null
+                    viewModel.selectedRegional.collect { state ->
+                        val key = state?.vehicle?.key
+                        if (key != null && key != lastKey && styleReady) {
+                            mapLibreMap?.let { map ->
+                                val sheet = resources.displayMetrics.heightPixels * 0.45
+                                map.animateCamera(
+                                    org.maplibre.android.camera.CameraUpdateFactory.newCameraPosition(
+                                        CameraPosition.Builder()
+                                            .target(LatLng(state.vehicle.lat, state.vehicle.lon))
+                                            .zoom(maxOf(map.cameraPosition.zoom, 14.5))
+                                            .padding(0.0, 0.0, 0.0, sheet)
+                                            .build()
+                                    ), 900
+                                )
+                            }
+                        } else if (key == null && lastKey != null && styleReady) {
+                            mapLibreMap?.easeCamera(org.maplibre.android.camera.CameraUpdateFactory.paddingTo(0.0, 0.0, 0.0, 0.0), 300)
+                        }
+                        lastKey = key
                     }
                 }
                 launch {
@@ -469,7 +690,54 @@ class LiveMapActivity : ComponentActivity() {
     }
 
     override fun onStart()    { super.onStart();    mapView.onStart(); viewModel.setScreenVisible(true) }
-    override fun onResume()   { super.onResume();   mapView.onResume(); viewModel.startLocationTracking() }
+    override fun onResume()   { super.onResume();   mapView.onResume(); viewModel.startLocationTracking(); showMyLocation() }
+
+    /**
+     * A tua localização no mapa, como no Google Maps: ponto azul com aro branco, o círculo azul claro da precisão
+     * e, para onde estás virado (pela bússola), um feixe azul. Fica cinzento quando a localização deixa de chegar.
+     * Precisa da permissão e do mapa carregado; chamado quando cada uma chega e ao voltar ao mapa (a permissão
+     * pode ter sido dada nas definições entretanto). O MapLibre só pede a localização com o mapa visível.
+     */
+    @android.annotation.SuppressLint("MissingPermission")
+    private fun showMyLocation() {
+        val map = mapLibreMap ?: return
+        val style = map.style?.takeIf { styleReady && it.isFullyLoaded } ?: return
+        val granted = listOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION).any {
+            androidx.core.content.ContextCompat.checkSelfPermission(this, it) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+        if (!granted) return
+        try {
+            val component = map.locationComponent
+            if (!component.isLocationComponentActivated) {
+                val blue = 0xFF1A73E8.toInt()
+                val options = org.maplibre.android.location.LocationComponentOptions.builder(this)
+                    .foregroundTintColor(blue)
+                    .backgroundTintColor(AndroidColor.WHITE)
+                    .foregroundStaleTintColor(0xFF9AA0A6.toInt())
+                    .backgroundStaleTintColor(AndroidColor.WHITE)
+                    .accuracyColor(blue)
+                    .accuracyAlpha(0.15f)
+                    .bearingDrawable(com.example.metrotime.R.drawable.map_location_beam)
+                    .elevation(4f)
+                    .pulseEnabled(false)
+                    .build()
+                component.activateLocationComponent(
+                    org.maplibre.android.location.LocationComponentActivationOptions.Builder(this, style)
+                        .locationComponentOptions(options)
+                        .useDefaultLocationEngine(true)
+                        // Camada nativa do ponto azul: sem reescrever uma fonte GeoJSON a cada imagem
+                        .useSpecializedLocationLayer(true)
+                        .build()
+                )
+            }
+            component.isLocationComponentEnabled = true
+            // O mapa não te segue (ficas a ver o que escolheste); o feixe mostra para onde estás virado
+            component.cameraMode = org.maplibre.android.location.modes.CameraMode.NONE
+            component.renderMode = org.maplibre.android.location.modes.RenderMode.COMPASS
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
     override fun onPause()    { super.onPause();    mapView.onPause(); viewModel.stopLocationTracking() }
     override fun onStop()     { super.onStop();     mapView.onStop(); viewModel.setScreenVisible(false) }
 
@@ -505,7 +773,21 @@ class LiveMapActivity : ComponentActivity() {
 
 @Composable
 fun LiveMapOverlay(viewModel: LiveMapViewModel, onBack: () -> Unit) {
-    val selectedTrain by viewModel.selectedTrain.collectAsState()
+    // Metro: os metros, o escolhido, a bordo, o seletor de tempo, perturbações e seguir
+    val metroTrains by viewModel.metroTrains.collectAsState()
+    val selectedMetro by viewModel.selectedMetro.collectAsState()
+    val onboard by viewModel.onboard.collectAsState()
+    val metroStatuses by viewModel.metroStatuses.collectAsState()
+    val followKey by viewModel.followMetro.collectAsState()
+    val followPaused by viewModel.followPaused.collectAsState()
+    val myLocation by viewModel.myLocation.collectAsState()
+    // Relógio dos painéis (contagens que descem ao segundo)
+    val metroNow by produceState(System.currentTimeMillis()) {
+        while (true) {
+            kotlinx.coroutines.delay(1_000)
+            value = System.currentTimeMillis()
+        }
+    }
     val selectedStation by viewModel.selectedStation.collectAsState()
     val isLoading     by viewModel.isLoading.collectAsState()
 
@@ -530,6 +812,12 @@ fun LiveMapOverlay(viewModel: LiveMapViewModel, onBack: () -> Unit) {
     val selectedCpNumber by viewModel.selectedCpNumber.collectAsState()
     val selectedCpTrain by viewModel.selectedCpTrain.collectAsState()
     val cpTrip by viewModel.cpTrip.collectAsState()
+    // Outras redes (MobiCascais, barcos, Covilhã, Viseu…) e o painel dos filtros
+    val regionalVehicles by viewModel.regionalVehicles.collectAsState()
+    val regionalAll by viewModel.regionalAll.collectAsState()
+    val fertagusTrains by viewModel.fertagusTrains.collectAsState()
+    val selectedRegional by viewModel.selectedRegional.collectAsState()
+    var filtersOpen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var followRequest by remember { mutableStateOf<Pair<String, List<com.example.metrotime.data.cp.CpTrainStop>>?>(null) }
     val context = androidx.compose.ui.platform.LocalContext.current
 
@@ -590,6 +878,11 @@ fun LiveMapOverlay(viewModel: LiveMapViewModel, onBack: () -> Unit) {
                             )
                         }
                     }
+                    // Tudo o que se vê no mapa escolhe-se no painel dos filtros (antes: uma fila de botões por baixo)
+                    if (!isBusSearchOpen && !isBusMode) {
+                        FiltersButton(regionalFilterCount(mapFilters)) { filtersOpen = true }
+                        Spacer(Modifier.width(4.dp))
+                    }
                     IconButton(onClick = { viewModel.toggleBusSearch() }) {
                         Icon(
                             imageVector = if (isBusSearchOpen) androidx.compose.material.icons.Icons.Filled.Close else androidx.compose.material.icons.Icons.Filled.Search,
@@ -601,13 +894,34 @@ fun LiveMapOverlay(viewModel: LiveMapViewModel, onBack: () -> Unit) {
             }
 
             if (!isBusSearchOpen && !isBusMode) {
-                // Filtros: escolher o que aparece no mapa
-                MapFilterBar(
-                    filters = mapFilters,
-                    cpServices = cpServicesPresent,
-                    cpCount = cpTrains.size,
-                    onChange = { viewModel.updateMapFilters(it) }
-                )
+                Column(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Perturbações: o aviso por cima, o troço a cinzento no mapa
+                    if (mapFilters.metro) MetroDisruptionBanner(metroStatuses)
+                    // À noite: os últimos metros na estação mais perto
+                    val minute = metroServiceMinute(metroNow)
+                    val nearest = myLocation?.let { nearestMetroStation(it) }
+                    AnimatedVisibility(
+                        visible = mapFilters.metro && nearest != null && com.example.metrotime.data.metro.MetroNight.showCard(minute) && onboard == null,
+                        enter = slideInVertically { -it / 2 } + fadeIn(),
+                        exit = slideOutVertically { -it / 2 } + fadeOut()
+                    ) {
+                        if (nearest != null) {
+                            MetroNightCard(
+                                com.example.metrotime.data.MetroLines.nameOf(nearest),
+                                com.example.metrotime.data.metro.MetroNight.lastPasses(nearest, minute)
+                            )
+                        }
+                    }
+                    // A seguir um metro: o chip diz-o; depois de mexeres no mapa, toca para voltar a seguir
+                    AnimatedVisibility(visible = followKey != null, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+                        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            MetroFollowChip(paused = followPaused, onResume = { viewModel.followMetro(followKey) })
+                        }
+                    }
+                }
             }
 
             // ── Bus Search Bar (animated) ──────────────────────────────────────
@@ -752,7 +1066,13 @@ fun LiveMapOverlay(viewModel: LiveMapViewModel, onBack: () -> Unit) {
                     onArrivalSelected = { arrival ->
                         viewModel.clearSelectedBusStop()
                         val vehicleId = arrival.vehicleId
-                        if (arrival.realtime && vehicleId != null) {
+                        if (arrival.operator.startsWith("pack:") || arrival.operator.startsWith("eleven:")) {
+                            // Outras redes: o veículo em direto abre o painel delas; sem GPS, só a hora do horário
+                            if (arrival.realtime && vehicleId != null) viewModel.selectRegional(vehicleId)
+                            else android.widget.Toast.makeText(
+                                context, "Este ainda não tem GPS: parte às ${arrival.scheduledTime ?: "?"}.", android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        } else if (arrival.realtime && vehicleId != null) {
                             viewModel.selectBusByVehicleId(vehicleId, arrival.operator, arrival.routeShortName)
                         } else {
                             android.widget.Toast.makeText(
@@ -768,22 +1088,99 @@ fun LiveMapOverlay(viewModel: LiveMapViewModel, onBack: () -> Unit) {
             }
         }
 
-        // ── Train / Station info bottom sheets ─────────────────────────────────
-        val safeTrain: TrainPosition? = selectedTrain
-        val safeStation = selectedStation
-
+        // ── Veículo de outra rede (MobiCascais, barcos, Covilhã, Viseu…) ──────────
         AnimatedVisibility(
-            visible = safeTrain != null && !isBusMode,
-            enter = slideInVertically(initialOffsetY = { it }),
-            exit  = slideOutVertically(targetOffsetY = { it }),
+            visible = selectedRegional != null && !isBusMode,
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
             modifier = Modifier.align(Alignment.BottomCenter)
         ) {
-            if (safeTrain != null) {
-                TrainInfoSheet(
-                    train = safeTrain,
-                    onDismiss = { viewModel.selectTrain(null) }
+            // O último aberto fica durante a animação de saída
+            val shown = remember { mutableStateOf<LiveMapViewModel.RegionalSelection?>(null) }
+            selectedRegional?.let { shown.value = it }
+            shown.value?.let { state ->
+                // A Fertagus abre no painel dos comboios da CP (a azul, sem "Detalhes" e "Seguir", que são da CP)
+                val fertagus = state.vehicle.operator.kind == com.example.metrotime.data.regional.VehicleKind.TRAIN
+                val asCp = if (fertagus) remember(state.vehicle) { fertagusCpState(state.vehicle) } else null
+                if (asCp != null) {
+                    CpTrainSheet(
+                        number = asCp.first.number,
+                        train = asCp.second,
+                        state = asCp.first,
+                        onClose = { viewModel.selectRegional(null) },
+                        onDetails = {},
+                        onFollow = { _, _ -> },
+                        accent = FERTAGUS_BLUE,
+                        actions = false,
+                        footnote = "Dados: TML · GO Hub (CC BY 4.0) · horas pelo horário da Fertagus com o atraso"
+                    )
+                } else {
+                    RegionalVehicleSheet(state = state, now = metroNow, onClose = { viewModel.selectRegional(null) })
+                }
+            }
+        }
+
+        // ── Metro escolhido / a bordo / seletor de tempo ──────────────────────
+        val safeStation = selectedStation
+        val metroTrain = selectedMetro?.let { k -> metroTrains.firstOrNull { it.key == k } }
+        val sheetSpring = androidx.compose.animation.core.spring<androidx.compose.ui.unit.IntOffset>(
+            dampingRatio = 0.85f, stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
+        )
+
+        AnimatedVisibility(
+            visible = metroTrain != null && !isBusMode && onboard == null,
+            enter = slideInVertically(animationSpec = sheetSpring, initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            // O último metro aberto fica durante a animação de saída
+            val shown = remember { mutableStateOf<com.example.metrotime.data.metro.MetroTrain?>(null) }
+            if (metroTrain != null) shown.value = metroTrain
+            shown.value?.let { tr ->
+                MetroTrainSheet(
+                    train = tr,
+                    track = viewModel.metroTracks[tr.line],
+                    now = metroNow,
+                    following = followKey == tr.key,
+                    onBoard = { exit, alarm -> viewModel.startOnboard(tr.key, exit, alarm) },
+                    onFollow = { viewModel.followMetro(if (followKey == tr.key) null else tr.key) },
+                    onClose = { viewModel.selectMetro(null) }
                 )
             }
+        }
+
+        AnimatedVisibility(
+            visible = onboard != null && !isBusMode,
+            enter = slideInVertically(animationSpec = sheetSpring, initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            val shown = remember { mutableStateOf<LiveMapViewModel.Onboard?>(null) }
+            if (onboard != null) shown.value = onboard
+            shown.value?.let { b ->
+                MetroOnboardCard(
+                    board = b,
+                    train = metroTrains.firstOrNull { it.key == b.key },
+                    track = viewModel.metroTracks[b.line],
+                    now = metroNow,
+                    onAlarm = { viewModel.setOnboardAlarm(it) },
+                    onStop = { viewModel.stopOnboard() }
+                )
+            }
+        }
+
+        // Seletor de tempo: só com o mapa livre (sem painéis abertos)
+        // Com qualquer painel aberto (também o de um veículo das outras redes ou os filtros) o seletor sai
+        val sheetOpen = metroTrain != null || safeStation != null || selectedCpNumber != null || onboard != null ||
+            selectedBusStop != null || selectedLiveBus != null || selectedBusRoute != null ||
+            selectedRegional != null || filtersOpen
+        AnimatedVisibility(
+            visible = !isBusMode && mapFilters.metro && !sheetOpen,
+            enter = fadeIn() + slideInVertically { it / 2 },
+            exit = fadeOut() + slideOutVertically { it / 2 },
+            modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 24.dp)
+        ) {
+            MetroTimeBar(offsetFlow = viewModel.metroOffsetMs, onChange = { viewModel.setMetroOffset(it) })
         }
 
         AnimatedVisibility(
@@ -793,10 +1190,7 @@ fun LiveMapOverlay(viewModel: LiveMapViewModel, onBack: () -> Unit) {
             modifier = Modifier.align(Alignment.BottomCenter)
         ) {
             if (safeStation != null) {
-                StationInfoSheet(
-                    stationState = safeStation,
-                    onDismiss = { viewModel.selectStation(null) }
-                )
+                MetroStationSheet(safeStation, metroTrains, viewModel.metroTracks, metroNow) { viewModel.selectStation(null) }
             }
         }
 
@@ -836,6 +1230,34 @@ fun LiveMapOverlay(viewModel: LiveMapViewModel, onBack: () -> Unit) {
                 boardCode = null,
                 preselectCode = null,
                 onDismiss = { followRequest = null }
+            )
+        }
+
+        // ── Painel "O que ver no mapa" (por cima de tudo) ─────────────────────
+        AnimatedVisibility(visible = filtersOpen, enter = fadeIn(), exit = fadeOut()) {
+            // Os metros a andar agora: (Lisboa, Porto)
+            val metroNowCount = remember(metroTrains) {
+                val now = System.currentTimeMillis()
+                val running = metroTrains.filter { tr -> viewModel.metroTracks[tr.line]?.let { tr.placeAt(now, it) } != null }
+                running.count { !com.example.metrotime.data.metro.PortoMetro.isPorto(it.line) } to running.count { com.example.metrotime.data.metro.PortoMetro.isPorto(it.line) }
+            }
+            MapFiltersSheet(
+                filters = mapFilters,
+                vehicles = regionalAll,
+                metroCount = metroNowCount.first,
+                portoMetroCount = metroNowCount.second,
+                cpCount = cpTrains.size,
+                cpServices = cpServicesPresent,
+                onChange = { viewModel.updateMapFilters(it) },
+                onClose = { filtersOpen = false },
+                onShown = { key, shown -> viewModel.setOperatorShown(key, shown) },
+                onArea = { viewModel.showOnlyArea(it) },
+                onLines = { key, lines -> viewModel.setOperatorLines(key, lines) },
+                onReset = { viewModel.resetRegionalFilters() },
+                onSearchCarris = {
+                    filtersOpen = false
+                    viewModel.openBusSearch()
+                }
             )
         }
     }
@@ -1029,6 +1451,10 @@ private fun BusRouteStopRow(
 }
 // ── Live Bus Detail Bottom Sheet ─────────────────────────────────────────────────
 
+/**
+ * Autocarro da Carris ou da Carris Metropolitana: o mesmo painel dos autocarros das outras redes (linha na cor
+ * oficial, destino, as paragens num traço com o autocarro por cima, tocar onde sais para o aviso).
+ */
 @Composable
 private fun LiveBusDetailSheet(
     state: LiveMapViewModel.SelectedLiveBusState,
@@ -1036,196 +1462,95 @@ private fun LiveBusDetailSheet(
     onDismiss: () -> Unit
 ) {
     val bus = state.bus
-    val lineHex = routeColor ?: com.example.metrotime.data.bus.BusColors.forRoute(bus.routeShortName, bus.operator)
-    val color = busColor(lineHex) // destaques do painel na cor da linha (antes: amarelo fixo)
-
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(max = 480.dp)
-            .navigationBarsPadding(),
-        color = Color(0xFF1C1C20),
-        shadowElevation = 12.dp,
-        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
-    ) {
-        Column(
-            modifier = Modifier
-                .padding(horizontal = 20.dp, vertical = 16.dp)
-        ) {
-            // Drag handle
-            Box(
-                modifier = Modifier
-                    .width(40.dp).height(4.dp)
-                    .background(Color.Gray.copy(alpha = 0.5f), RoundedCornerShape(2.dp))
-                    .align(Alignment.CenterHorizontally)
-            )
-            Spacer(Modifier.height(12.dp))
-
-            // Bus header
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                BusLineBadge(bus.routeShortName, lineHex, height = 32.dp, fontSize = 17.sp)
-                Spacer(Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        bus.destination.ifEmpty { "Autocarro" },
-                        color = Color.White,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            // Só o número ("[BNA17]1252" → "1252")
-                            "Veículo ${bus.vehicleId.substringAfterLast("]").substringAfter("|")}",
-                            color = Color.Gray,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Normal
-                        )
-                        val statusText = when (bus.currentStatus) {
-                            "STOPPED_AT" -> " • Parado"
-                            "INCOMING_AT" -> " • A chegar"
-                            "IN_TRANSIT_TO" -> " • Em trânsito"
-                            else -> ""
-                        }
-                        if (statusText.isNotEmpty()) {
-                            Text(statusText, color = color, fontSize = 12.sp)
-                        }
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-
-            if (state.loading) {
-                Box(
-                    modifier = Modifier.fillMaxWidth().height(100.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator(color = color, modifier = Modifier.size(24.dp))
-                }
-            } else if (state.schedule.isEmpty()) {
-                Text(
-                    "Horário não disponível para este autocarro.",
-                    color = Color.Gray,
-                    fontSize = 13.sp,
-                    modifier = Modifier.padding(vertical = 8.dp)
-                )
-            } else {
-                Text(
-                    "Próximas paragens",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp
-                )
-                Spacer(Modifier.height(8.dp))
-
-                // Find the index of the current stop
-                val currentIdx = state.schedule.indexOfFirst { !it.isPassed }
-
-                // Scrollable list of stops
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .verticalScroll(rememberScrollState())
-                ) {
-                    state.schedule.forEachIndexed { index, stop ->
-                        val isCurrent = index == currentIdx
-                        val isPassed = stop.isPassed
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(IntrinsicSize.Min) // Force minimum intrinsic height so child Column can fill it
-                                .padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            // Timeline indicator
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier
-                                    .width(24.dp)
-                                    .fillMaxHeight()
-                            ) {
-                                // Upper line
-                                Box(
-                                    modifier = Modifier
-                                        .width(4.dp)
-                                        .weight(1f)
-                                        .background(
-                                            if (index == 0) Color.Transparent
-                                            else if (isPassed || isCurrent) Color.Gray.copy(alpha = 0.4f)
-                                            else color
-                                        )
-                                )
-                                // Circle dot
-                                Box(
-                                    modifier = Modifier
-                                        .size(if (isCurrent) 14.dp else 10.dp)
-                                        .background(
-                                            when {
-                                                isCurrent -> color
-                                                isPassed -> Color.Gray.copy(alpha = 0.5f)
-                                                else -> color
-                                            },
-                                            RoundedCornerShape(50)
-                                        )
-                                )
-                                // Lower line
-                                Box(
-                                    modifier = Modifier
-                                        .width(4.dp)
-                                        .weight(1f)
-                                        .background(
-                                            if (index == state.schedule.size - 1) Color.Transparent
-                                            else if (isPassed) Color.Gray.copy(alpha = 0.4f)
-                                            else color
-                                        )
-                                )
-                            }
-
-                            Spacer(Modifier.width(10.dp))
-
-                            // Stop name
-                            Text(
-                                stop.stopName,
-                                color = when {
-                                    isCurrent -> Color.White
-                                    isPassed -> Color.Gray.copy(alpha = 0.5f)
-                                    else -> Color.White.copy(alpha = 0.9f)
-                                },
-                                fontSize = if (isCurrent) 16.sp else 15.sp,
-                                fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-
-                            // Arrival time
-                            Text(
-                                stop.arrivalTime,
-                                color = when {
-                                    isCurrent -> color
-                                    isPassed -> Color.Gray.copy(alpha = 0.4f)
-                                    else -> Color.LightGray
-                                },
-                                fontSize = if (isCurrent) 16.sp else 15.sp,
-                                fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium
-                            )
-                        }
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-            OutlinedButton(
-                onClick = onDismiss,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = color)
-            ) { Text("Voltar") }
-            Spacer(Modifier.height(8.dp))
+    val context = LocalContext.current
+    val lineHex = routeColor?.let { com.example.metrotime.data.bus.BusColors.normalize(it) }
+        ?: com.example.metrotime.data.bus.BusColors.forRoute(bus.routeShortName, bus.operator)
+    val cm = bus.operator == "carris_metropolitana"
+    val kind = carrisKind(bus.routeShortName, bus.operator)
+    val operator = remember(cm, kind) {
+        (if (cm) com.example.metrotime.data.regional.RegionalOperators.CM else com.example.metrotime.data.regional.RegionalOperators.CARRIS).copy(kind = kind)
+    }
+    val destination = bus.destination.ifEmpty { state.schedule.lastOrNull()?.stopName.orEmpty() }
+    // Os minutos até cada paragem andam sozinhos
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(15_000)
+            now = System.currentTimeMillis()
         }
     }
+    val stops = remember(state.schedule, state.delaySeconds, now) {
+        val nowSec = java.time.Instant.ofEpochMilli(now).atZone(java.time.ZoneId.of("Europe/Lisbon")).toLocalTime().toSecondOfDay()
+        state.schedule.map { st ->
+            // Com o horário da viagem: a hora prevista = a do horário + o atraso de agora
+            val sched = st.scheduledSec
+            val due = when {
+                st.isPassed -> null
+                sched != null -> {
+                    val at = sched + (state.delaySeconds ?: 0)
+                    val rel = if (at - nowSec > 12 * 3600) at - 24 * 3600 - nowSec else at - nowSec
+                    (rel / 60).coerceAtLeast(0)
+                }
+                else -> minutesUntilClock(st.arrivalTime, now)
+            }
+            st to com.example.metrotime.data.regional.RegionalStop(
+                name = st.stopName,
+                lat = Double.NaN,
+                lon = Double.NaN,
+                clock = st.arrivalTime.takeIf { it.isNotBlank() },
+                dueMinutes = due,
+                passed = st.isPassed
+            )
+        }
+    }
+    val vehicle = com.example.metrotime.data.regional.RegionalVehicle(
+        operator = operator,
+        vehicleId = bus.vehicleId,
+        lat = bus.lat,
+        lon = bus.lon,
+        line = bus.routeShortName,
+        color = lineHex,
+        status = bus.currentStatus.ifEmpty { null },
+        destination = destination.ifEmpty { null },
+        delaySeconds = state.delaySeconds
+    )
+    val trip = if (state.loading && state.schedule.isEmpty()) null else com.example.metrotime.data.regional.RegionalTrip(
+        line = bus.routeShortName,
+        lineName = null,
+        color = lineHex,
+        destination = destination.ifEmpty { null },
+        stops = stops.map { it.second },
+        shape = emptyList()
+    )
+    RegionalVehicleSheet(
+        LiveMapViewModel.RegionalSelection(vehicle, trip, state.loading),
+        now,
+        onDismiss,
+        locate = { stop -> stops.firstOrNull { it.second === stop }?.first?.let { busStopCoords(context, it.stopId, bus.operator) } }
+    )
 }
+
+/** Minutos de agora até "18:28" (hora de Lisboa; à volta da meia-noite conta para o lado mais perto); 0 se já passou. */
+private fun minutesUntilClock(clock: String, now: Long): Int? {
+    val parts = clock.trim().split(":")
+    val h = parts.getOrNull(0)?.toIntOrNull() ?: return null
+    val m = parts.getOrNull(1)?.toIntOrNull() ?: return null
+    val t = java.time.Instant.ofEpochMilli(now).atZone(java.time.ZoneId.of("Europe/Lisbon"))
+    var diff = (h * 60 + m) - (t.hour * 60 + t.minute)
+    if (diff < -720) diff += 1440 else if (diff > 720) diff -= 1440
+    return diff.coerceAtLeast(0)
+}
+
+/** Coordenadas de uma paragem pelo id (Carris: dados da app; Carris Metropolitana: lista da API, já em cache). */
+private suspend fun busStopCoords(context: android.content.Context, stopId: String, operator: String): Pair<Double, Double>? =
+    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        if (operator == "carris_metropolitana") {
+            com.example.metrotime.data.bus.BusMapRepository.getAllCmStops().find { it.id == stopId }?.let { it.lat to it.lon }
+        } else {
+            com.example.metrotime.data.bus.CarrisGtfsData.ensureLoaded(context)
+            com.example.metrotime.data.bus.CarrisGtfsData.stops.find { it.id == stopId }?.let { it.lat to it.lon }
+        }
+    }
 
 // ── Bus Stop Detail Bottom Sheet ─────────────────────────────────────────────────
 
@@ -1243,394 +1568,315 @@ private fun BusStopDetailSheet(
     val context = LocalContext.current
     val stop = state.stop
     var isFav by remember(stop.id) { mutableStateOf(com.example.metrotime.prefs.Prefs.isFavoriteBusStop(context, stop.operator, stop.id)) }
+    // Autocarros com aviso ligado ("avisar quando estiver a chegar"), para o sino de cada um
+    var followed by remember { mutableStateOf(com.example.metrotime.work.BusFollow.all(context)) }
     var selected by remember(stop.id) { mutableStateOf(setOf<String>()) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(Unit) { while (true) { kotlinx.coroutines.delay(5_000); now = System.currentTimeMillis() } }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(5_000)
+            now = System.currentTimeMillis()
+            // O aviso acaba sozinho quando o autocarro passa: o sino volta a cinzento
+            followed = com.example.metrotime.work.BusFollow.all(context)
+        }
+    }
 
     val lines = remember(state.arrivals) {
         state.arrivals.map { it.routeShortName to it.color }.distinctBy { it.first }
             .sortedWith(compareBy({ it.first.filter(Char::isDigit).toIntOrNull() ?: Int.MAX_VALUE }, { it.first }))
     }
-    // Uma linha por (número, destino): a próxima chegada e, por baixo, a seguinte
-    val groups = remember(state.arrivals, selected) {
+    // Todos os autocarros das próximas 5 h, um por linha da lista, por ordem de chegada (como no Google Maps)
+    val rows = remember(state.arrivals, selected) {
         state.arrivals
             .filter { selected.isEmpty() || it.routeShortName in selected }
-            .groupBy { it.routeShortName to it.destination }
-            .values.map { it.sortedBy { a -> a.etaMinutes } }
-            .sortedBy { it.first().etaMinutes }
+            .sortedWith(compareBy({ it.etaMinutes }, { it.routeShortName }))
     }
+    // Abre a meio do ecrã (o mapa fica à vista); pela pega sobe até quase ao topo ou desce até só o cabeçalho
+    val drag = rememberSheetDrag(listOf(0.32f, 0.5f, 0.9f), initial = 1, key = stop.id)
+    val density = LocalDensity.current
 
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(max = 480.dp)
+            .sheetDrag(drag, density)
             .navigationBarsPadding(),
         color = DarkBackground,
         shadowElevation = 12.dp,
         shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
     ) {
-        Column(
-            modifier = Modifier
-                .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 16.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .width(40.dp).height(4.dp)
-                    .background(Color(0xFF4A4D53), RoundedCornerShape(2.dp))
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                BusStopSign(40.dp)
-                Spacer(Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(stop.name, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(
-                        if (stop.operator == "carris_metropolitana") "Paragem da Carris Metropolitana" else "Paragem da Carris",
-                        color = TextSecondaryDark,
-                        fontSize = 12.sp
-                    )
-                    // Põe esta paragem no widget (ou pede para o adicionar ao ecrã inicial)
-                    Text(
-                        "Mostrar no widget",
-                        color = MetrotimeBlue,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier
-                            .padding(top = 2.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .clickable {
-                                val entry = listOf(stop.operator, stop.id, stop.name.replace("|", "/"), stop.lat, stop.lon).joinToString("|")
-                                com.example.metrotime.prefs.Prefs.setBusWidgetStop(context, entry)
-                                val manager = android.appwidget.AppWidgetManager.getInstance(context)
-                                if (com.example.metrotime.work.BusWidgetUpdater.hasWidgets(context)) {
-                                    BusWidgetProvider.refresh(context)
-                                    android.widget.Toast.makeText(context, "O widget passa a mostrar ${stop.name}.", android.widget.Toast.LENGTH_SHORT).show()
-                                } else if (manager.isRequestPinAppWidgetSupported) {
-                                    manager.requestPinAppWidget(android.content.ComponentName(context, BusWidgetProvider::class.java), null, null)
-                                } else {
-                                    android.widget.Toast.makeText(context, "Adiciona o widget \"Paragem de autocarro\" no ecrã inicial.", android.widget.Toast.LENGTH_LONG).show()
-                                }
-                            }
-                            .padding(vertical = 2.dp)
-                    )
-                }
-                IconButton(onClick = {
-                    com.example.metrotime.prefs.Prefs.toggleFavoriteBusStop(context, stop.operator, stop.id, stop.name, stop.lat, stop.lon)
-                    isFav = !isFav
-                }) {
-                    Icon(
-                        Icons.Filled.Star,
-                        contentDescription = if (isFav) "Remover das favoritas" else "Adicionar às favoritas",
-                        tint = if (isFav) Color(0xFFFFCA28) else TextSecondaryDark
-                    )
-                }
-                IconButton(onClick = onDismiss) {
-                    Icon(androidx.compose.material.icons.Icons.Filled.Close, contentDescription = "Fechar", tint = TextSecondaryDark)
-                }
-            }
-
-            if (lines.size > 1) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Mostrar linhas", color = TextSecondaryDark, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        val allOn = selected.isEmpty()
-                        Box(
-                            modifier = Modifier
-                                .height(34.dp)
-                                .clip(RoundedCornerShape(17.dp))
-                                .background(if (allOn) MetrotimeBlue else CardBackground)
-                                .border(1.dp, if (allOn) MetrotimeBlue else Color(0xFF3A3D42), RoundedCornerShape(17.dp))
-                                .clickable { selected = emptySet() }
-                                .padding(horizontal = 14.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text("Todas", color = if (allOn) Color.White else Color(0xFFDADDE2), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                        }
-                        lines.forEach { (number, hex) ->
-                            val on = number in selected
-                            val color = busColor(hex)
-                            Row(
-                                modifier = Modifier
-                                    .height(34.dp)
-                                    .clip(RoundedCornerShape(17.dp))
-                                    .background(if (on) color else CardBackground)
-                                    .border(1.dp, if (on) color else Color(0xFF3A3D42), RoundedCornerShape(17.dp))
-                                    .clickable { selected = if (on) selected - number else selected + number }
-                                    .padding(start = 12.dp, end = 14.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Box(Modifier.size(10.dp).clip(CircleShape).background(if (on) busColor(com.example.metrotime.data.bus.BusColors.textOn(hex)) else color))
-                                Text(
-                                    number,
-                                    color = if (on) busColor(com.example.metrotime.data.bus.BusColors.textOn(hex)) else Color(0xFFDADDE2),
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(modifier = Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Próximas chegadas", color = TextSecondaryDark, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                    if (state.updatedAt > 0) {
-                        val secs = ((now - state.updatedAt) / 1000).coerceAtLeast(0)
-                        Text(if (secs < 60) "atualizado há $secs s" else "atualizado há ${secs / 60} min", color = TextSecondaryDark, fontSize = 11.sp)
-                    }
-                }
-                when {
-                    state.loading -> Box(Modifier.fillMaxWidth().padding(vertical = 20.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(26.dp), strokeWidth = 3.dp)
-                    }
-                    groups.isEmpty() -> Text(
-                        "Nenhum autocarro a caminho desta paragem.",
-                        color = TextSecondaryDark,
-                        fontSize = 14.sp,
-                        modifier = Modifier.padding(start = 4.dp, top = 4.dp)
-                    )
-                    else -> Surface(color = CardBackground, shape = RoundedCornerShape(14.dp)) {
-                        Column {
-                            groups.forEachIndexed { i, group ->
-                                val next = group.first()
-                                if (i > 0) Box(Modifier.padding(start = 74.dp).fillMaxWidth().height(1.dp).background(Color(0xFF3A3D42)))
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { onArrivalSelected(next) }
-                                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    BusLineBadge(next.routeShortName, next.color)
-                                    Spacer(Modifier.width(12.dp))
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text("para", color = TextSecondaryDark, fontSize = 12.sp)
-                                        Text(next.destination, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    }
-                                    Spacer(Modifier.width(8.dp))
-                                    // Tempo real (minutos, sinal de GPS e atraso) ou previsto (pelo horário)
-                                    Column(horizontalAlignment = Alignment.End) {
-                                        BusEta(next)
-                                        BusStatusLine(next)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                if (groups.isNotEmpty()) {
-                    Text("Toca num autocarro para ver onde está.", color = TextSecondaryDark, fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp))
-                }
-            }
-        }
-    }
-}
-
-
-@Composable
-private fun StationInfoSheet(stationState: LiveMapViewModel.SelectedStationState, onDismiss: () -> Unit) {
-    val stationLines = remember(stationState.id) {
-        MapConfiguration.LINE_STATION_ORDER.filter { it.value.contains(stationState.id) }.keys.toList()
-    }
-    var selectedTab by remember(stationState.id) { mutableStateOf(stationLines.firstOrNull() ?: "") }
-
-    Surface(
-        modifier = Modifier.fillMaxWidth().navigationBarsPadding(),
-        color = Color(0xFF1C1C20),
-        shadowElevation = 12.dp,
-        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
-    ) {
-        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
-            Box(
-                modifier = Modifier
-                    .width(40.dp).height(4.dp)
-                    .background(Color.Gray.copy(alpha = 0.5f), RoundedCornerShape(2.dp))
-                    .align(Alignment.CenterHorizontally)
-            )
-            Spacer(Modifier.height(16.dp))
-            
-            Text(stationState.name, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(12.dp))
-            
-            if (stationLines.size > 1) {
-                // Interface station: render clickable chips
-                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    stationLines.forEach { line ->
-                        val lineColor = when (line) {
-                            "Azul"     -> LineAzul
-                            "Amarela"  -> LineAmarela
-                            "Verde"    -> LineVerde
-                            "Vermelha" -> LineVermelha
-                            else       -> Color.Gray
-                        }
-                        val isSelected = selectedTab == line
-                        Box(
-                            modifier = Modifier
-                                .background(if (isSelected) lineColor else Color.Transparent, RoundedCornerShape(16.dp))
-                                .border(1.dp, lineColor, RoundedCornerShape(16.dp))
-                                .clickable { selectedTab = line }
-                                .padding(horizontal = 14.dp, vertical = 6.dp)
-                        ) {
-                            Text("Linha $line", color = if (isSelected) Color.White else lineColor, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                        }
-                    }
-                }
-            } else if (stationLines.isNotEmpty()) {
-                // Single line station
-                val line = stationLines.first()
-                val lineColor = when (line) {
-                    "Azul"     -> LineAzul
-                    "Amarela"  -> LineAmarela
-                    "Verde"    -> LineVerde
-                    "Vermelha" -> LineVermelha
-                    else       -> Color.Gray
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 12.dp)) {
-                    Icon(CircleIcon, contentDescription = null, tint = lineColor, modifier = Modifier.size(12.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Linha $line", color = lineColor, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                }
-            }
-            
-            if (stationState.loading) {
-                Spacer(Modifier.height(16.dp))
-                CircularProgressIndicator(color = Color.White, modifier = Modifier.align(Alignment.CenterHorizontally))
-                Spacer(Modifier.height(16.dp))
-            } else {
-                val arrivals = stationState.arrivals?.arrivals?.filter { it.line == selectedTab || selectedTab.isEmpty() } ?: emptyList()
-                val isEstimated = stationState.arrivals?.isEstimated ?: false
-                
-                if (isEstimated) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 8.dp)
-                            .background(Color(0xFF4A3500), RoundedCornerShape(10.dp))
-                            .padding(horizontal = 12.dp, vertical = 9.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Filled.Warning, contentDescription = null, tint = Color(0xFFF59E0B), modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
+        Column(Modifier.fillMaxSize()) {
+            // A pega e o cabeçalho agarram o painel; o resto (linhas e chegadas) desliza por baixo
+            Column(Modifier.fillMaxWidth().sheetDragArea(drag, onDismiss).padding(start = 16.dp, end = 16.dp, bottom = 10.dp)) {
+                SheetHandle(drag, onDismiss)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    BusStopSign(40.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(stop.name, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         Text(
-                            "Tempos estimados (API indisponível)",
-                            color = Color(0xFFF59E0B),
+                            when {
+                                stop.operator == "carris_metropolitana" -> "Paragem da Carris Metropolitana"
+                                stop.operator.startsWith("eleven:") ->
+                                    "Paragem · ${com.example.metrotime.data.regional.RegionalOperators.byKey(stop.operator)?.name ?: "outra rede"}"
+                                stop.operator.startsWith("pack:") -> {
+                                    val op = com.example.metrotime.data.regional.RegionalOperators.byPack(stop.operator.removePrefix("pack:"))
+                                    when (op?.kind) {
+                                        com.example.metrotime.data.regional.VehicleKind.BOAT -> "Cais · ${op.name}"
+                                        com.example.metrotime.data.regional.VehicleKind.TRAIN,
+                                        com.example.metrotime.data.regional.VehicleKind.SUBWAY,
+                                        com.example.metrotime.data.regional.VehicleKind.TRAM -> "Estação · ${op.name}"
+                                        else -> "Paragem · ${op?.name ?: "outra rede"}"
+                                    }
+                                }
+                                else -> "Paragem da Carris"
+                            },
+                            color = TextSecondaryDark,
+                            fontSize = 12.sp
+                        )
+                        // Põe esta paragem no widget (ou pede para o adicionar ao ecrã inicial)
+                        Text(
+                            "Mostrar no widget",
+                            color = MetrotimeBlue,
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier
+                                .padding(top = 2.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable {
+                                    val entry = listOf(stop.operator, stop.id, stop.name.replace("|", "/"), stop.lat, stop.lon).joinToString("|")
+                                    com.example.metrotime.prefs.Prefs.setBusWidgetStop(context, entry)
+                                    val manager = android.appwidget.AppWidgetManager.getInstance(context)
+                                    if (com.example.metrotime.work.BusWidgetUpdater.hasWidgets(context)) {
+                                        BusWidgetProvider.refresh(context)
+                                        android.widget.Toast.makeText(context, "O widget passa a mostrar ${stop.name}.", android.widget.Toast.LENGTH_SHORT).show()
+                                    } else if (manager.isRequestPinAppWidgetSupported) {
+                                        manager.requestPinAppWidget(android.content.ComponentName(context, BusWidgetProvider::class.java), null, null)
+                                    } else {
+                                        android.widget.Toast.makeText(context, "Adiciona o widget \"Paragem de autocarro\" no ecrã inicial.", android.widget.Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                                .padding(vertical = 2.dp)
                         )
                     }
+                    // O caminho a pé até esta paragem, desde onde estás
+                    IconButton(onClick = {
+                        context.startActivity(WalkRouteActivity.newIntent(context, stop.lat, stop.lon, stop.name))
+                    }) {
+                        Icon(WalkIcon, contentDescription = "A pé até aqui", tint = MetrotimeBlue)
+                    }
+                    IconButton(onClick = {
+                        com.example.metrotime.prefs.Prefs.toggleFavoriteBusStop(context, stop.operator, stop.id, stop.name, stop.lat, stop.lon)
+                        isFav = !isFav
+                    }) {
+                        Icon(
+                            Icons.Filled.Star,
+                            contentDescription = if (isFav) "Remover das favoritas" else "Adicionar às favoritas",
+                            tint = if (isFav) Color(0xFFFFCA28) else TextSecondaryDark
+                        )
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(androidx.compose.material.icons.Icons.Filled.Close, contentDescription = "Fechar", tint = TextSecondaryDark)
+                    }
+                }
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                if (lines.size > 1) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            val allOn = selected.isEmpty()
+                            Box(
+                                modifier = Modifier
+                                    .heightIn(min = 34.dp)
+                                    .clip(RoundedCornerShape(17.dp))
+                                    .background(if (allOn) MetrotimeBlue else CardBackground)
+                                    .border(1.dp, if (allOn) MetrotimeBlue else Color(0xFF3A3D42), RoundedCornerShape(17.dp))
+                                    .clickable { selected = emptySet() }
+                                    .padding(horizontal = 14.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("Todas", color = if (allOn) Color.White else Color(0xFFDADDE2), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                            lines.forEach { (number, hex) ->
+                                val on = number in selected
+                                val color = busColor(hex)
+                                Row(
+                                    modifier = Modifier
+                                        .heightIn(min = 34.dp)
+                                        .clip(RoundedCornerShape(17.dp))
+                                        .background(if (on) color else CardBackground)
+                                        .border(1.dp, if (on) color else Color(0xFF3A3D42), RoundedCornerShape(17.dp))
+                                        .clickable { selected = if (on) selected - number else selected + number }
+                                        .padding(start = 12.dp, end = 14.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Box(Modifier.size(10.dp).clip(CircleShape).background(if (on) busColor(com.example.metrotime.data.bus.BusColors.textOn(hex)) else color))
+                                    Text(
+                                        number,
+                                        color = if (on) busColor(com.example.metrotime.data.bus.BusColors.textOn(hex)) else Color(0xFFDADDE2),
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
-                if (arrivals.isEmpty()) {
-                    Text("Não há comboios previstos para esta linha.", color = Color.LightGray, fontSize = 14.sp)
-                } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        arrivals.sortedBy { it.minutes }.take(4).forEach { arr ->
-                            val mins = arr.minutes / 60
-                            val secs = arr.minutes % 60
-                            val timeStr = when {
-                                arr.minutes <= 15 -> "Na estação."
-                                arr.minutes <= 30 -> "A chegar!"
-                                else -> "%02d:%02d".format(mins, secs)
-                            }
-                            
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(Color(0xFF2A2A30), RoundedCornerShape(12.dp))
-                                    .padding(vertical = 12.dp, horizontal = 16.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column {
-                                    Text("Sentido", color = Color.Gray, fontSize = 12.sp)
-                                    Text(arr.direction, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(modifier = Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Próximas chegadas", color = TextSecondaryDark, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        if (state.updatedAt > 0) {
+                            val secs = ((now - state.updatedAt) / 1000).coerceAtLeast(0)
+                            Text(if (secs < 60) "atualizado há $secs s" else "atualizado há ${secs / 60} min", color = TextSecondaryDark, fontSize = 11.sp)
+                        }
+                    }
+                    when {
+                        state.loading -> Box(Modifier.fillMaxWidth().padding(vertical = 20.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(color = Color.White, modifier = Modifier.size(26.dp), strokeWidth = 3.dp)
+                        }
+                        rows.isEmpty() -> Text(
+                            "Nenhum autocarro a caminho desta paragem.",
+                            color = TextSecondaryDark,
+                            fontSize = 14.sp,
+                            modifier = Modifier.padding(start = 4.dp, top = 4.dp)
+                        )
+                        else -> Surface(color = CardBackground, shape = RoundedCornerShape(14.dp)) {
+                            Column {
+                                rows.forEachIndexed { i, a ->
+                                    if (i > 0) Box(Modifier.padding(start = 14.dp).fillMaxWidth().height(1.dp).background(Color(0xFF3A3D42)))
+                                    val mine = followed.firstOrNull { f -> f.stopId == stop.id && com.example.metrotime.work.BusFollow.matches(f, a, now) }
+                                    StopArrivalRow(
+                                        a = a,
+                                        following = mine != null,
+                                        onClick = { onArrivalSelected(a) },
+                                        onBell = {
+                                            val time = arrivalClock(a)
+                                            if (mine != null) {
+                                                com.example.metrotime.work.BusFollow.stop(context, mine.id)
+                                                followed = com.example.metrotime.work.BusFollow.all(context)
+                                                android.widget.Toast.makeText(context, "Aviso do ${a.routeShortName} das $time cancelado.", android.widget.Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                val f = com.example.metrotime.work.BusFollow.Followed(
+                                                    operator = stop.operator,
+                                                    stopId = stop.id,
+                                                    stopName = stop.name,
+                                                    stopLat = stop.lat,
+                                                    stopLon = stop.lon,
+                                                    line = a.routeShortName,
+                                                    destination = a.destination,
+                                                    vehicleId = a.vehicleId.takeIf { a.realtime },
+                                                    scheduledTime = a.scheduledTime,
+                                                    dueAt = System.currentTimeMillis() + a.etaMinutes * 60_000L
+                                                )
+                                                val started = com.example.metrotime.work.BusFollow.start(context, f)
+                                                followed = com.example.metrotime.work.BusFollow.all(context)
+                                                android.widget.Toast.makeText(
+                                                    context,
+                                                    if (started) "Aviso quando o ${a.routeShortName} das $time estiver a ${f.alertMinutes} min daqui."
+                                                    else "Já tens ${com.example.metrotime.work.BusFollow.MAX_FOLLOWS} avisos ligados. Desliga um primeiro.",
+                                                    android.widget.Toast.LENGTH_LONG
+                                                ).show()
+                                            }
+                                        }
+                                    )
                                 }
-                                Text(
-                                    text = timeStr,
-                                    color = if (arr.minutes <= 60) Color(0xFFFF5252) else Color.White,
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
                             }
                         }
                     }
                 }
             }
-            
-            Spacer(Modifier.height(20.dp))
-            OutlinedButton(
-                onClick = onDismiss,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
-            ) { Text("Fechar") }
-            Spacer(Modifier.height(8.dp))
         }
     }
 }
 
-@Composable
-private fun TrainInfoSheet(train: TrainPosition, onDismiss: () -> Unit) {
-    val lineColor = when (train.line) {
-        "Azul"     -> LineAzul
-        "Amarela"  -> LineAmarela
-        "Verde"    -> LineVerde
-        "Vermelha" -> LineVermelha
-        else       -> Color.Gray
-    }
-    
-    val minutes   = train.secondsToNextStation / 60
-    val seconds   = train.secondsToNextStation % 60
-    
-    val timeStr = when {
-        train.secondsToNextStation <= 15 -> "Na estação."
-        train.secondsToNextStation <= 30 -> "A chegar!"
-        else -> "%02d:%02d".format(minutes, seconds)
-    }
-    
-    val timeColor = if (train.secondsToNextStation <= 60) Color(0xFFFF5252) else Color.White
+/** Hora a que o autocarro chega: a do horário se for só previsto, senão agora mais os minutos que faltam. */
+private fun arrivalClock(a: com.example.metrotime.data.bus.BusMapRepository.StopArrivalInfo): String =
+    if (!a.realtime && a.scheduledTime != null) a.scheduledTime
+    else java.time.LocalTime.now(java.time.ZoneId.of("Europe/Lisbon")).plusMinutes(a.etaMinutes.toLong())
+        .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
 
-    Surface(
-        modifier = Modifier.fillMaxWidth().navigationBarsPadding(),
-        color = Color(0xFF1C1C20),
-        shadowElevation = 12.dp,
-        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+/**
+ * Um autocarro na paragem, como no Google Maps: número e destino; por baixo o estado ("a horas", "atrasado
+ * 6 min" com a hora do horário riscada, "previsto · 19:51"); à direita "Agora", os minutos ou, a mais de uma
+ * hora, a hora; e o sino para avisar quando este autocarro estiver a chegar.
+ */
+@Composable
+private fun StopArrivalRow(
+    a: com.example.metrotime.data.bus.BusMapRepository.StopArrivalInfo,
+    following: Boolean,
+    onClick: () -> Unit,
+    onBell: () -> Unit
+) {
+    val status = a.status
+    val color = busStatusColor(status.kind)
+    val eta = a.etaMinutes
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(start = 14.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
-            Box(
-                modifier = Modifier
-                    .width(40.dp).height(4.dp)
-                    .background(Color.Gray.copy(alpha = 0.5f), RoundedCornerShape(2.dp))
-                    .align(Alignment.CenterHorizontally)
-            )
-            Spacer(Modifier.height(12.dp))
-            val topTitle = if (train.isGhost) "Comboio (Sem Sinal): ${train.id}" else "Comboio: ${train.id}"
-            Text(topTitle, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(CircleIcon, contentDescription = null, tint = lineColor, modifier = Modifier.size(14.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Linha: ${train.line}", color = lineColor, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                BusLineBadge(a.routeShortName, a.color, height = 26.dp, fontSize = 14.sp)
+                Text(a.destination, color = Color.White, fontSize = 16.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Spacer(Modifier.height(6.dp))
-            Text("Destino: ${train.destination}",             color = Color.White,     fontSize = 15.sp)
-            Spacer(Modifier.height(4.dp))
-            Text("Próxima Estação: ${train.nextStationName}", color = Color.LightGray, fontSize = 14.sp)
-            Spacer(Modifier.height(4.dp))
-            Text("Tempo Restante: $timeStr", color = timeColor, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-            Spacer(Modifier.height(16.dp))
-            OutlinedButton(
-                onClick = onDismiss,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
-            ) { Text("Fechar") }
-            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (status.realtime) Icon(LiveIcon, contentDescription = "Tempo real", tint = color, modifier = Modifier.size(11.dp))
+                val late = status.kind == com.example.metrotime.data.bus.BusTiming.Kind.LATE || status.kind == com.example.metrotime.data.bus.BusTiming.Kind.VERY_LATE
+                Text(
+                    when {
+                        !status.realtime && a.scheduledTime != null && eta < 60 -> "${status.text} · ${a.scheduledTime}"
+                        late && a.scheduledTime != null -> "${status.text} ·"
+                        else -> status.text
+                    },
+                    color = color, fontSize = 13.sp, lineHeight = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
+                )
+                if (late && a.scheduledTime != null) {
+                    Text(
+                        a.scheduledTime, color = Color(0xFF8E929A), fontSize = 13.sp, lineHeight = 17.sp,
+                        textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.widthIn(min = 56.dp)) {
+            val timeColor = if (status.realtime) color else Color.White
+            when {
+                eta <= 0 -> Text("Agora", color = timeColor, fontSize = 18.sp, lineHeight = 22.sp, fontWeight = FontWeight.Bold)
+                eta < 60 -> {
+                    Text("$eta", color = timeColor, fontSize = 22.sp, lineHeight = 24.sp, fontWeight = FontWeight.Bold)
+                    Text("min", color = TextSecondaryDark, fontSize = 12.sp, lineHeight = 14.sp)
+                }
+                else -> Text(arrivalClock(a), color = timeColor, fontSize = 18.sp, lineHeight = 22.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+        IconButton(
+            onClick = onBell,
+            modifier = Modifier
+                .padding(start = 2.dp)
+                .size(44.dp)
+                .clip(CircleShape)
+                .background(if (following) MetrotimeBlue.copy(alpha = 0.18f) else Color.Transparent)
+        ) {
+            Icon(
+                if (following) Icons.Filled.Notifications else androidx.compose.material.icons.Icons.Outlined.Notifications,
+                contentDescription = if (following) "Cancelar o aviso deste autocarro" else "Avisar quando este autocarro estiver a chegar",
+                tint = if (following) MetrotimeBlue else TextSecondaryDark,
+                modifier = Modifier.size(22.dp)
+            )
         }
     }
 }
@@ -1647,48 +1893,6 @@ private fun lineColorInt(lineName: String): Int = when (lineName) {
     "Verde"    -> AndroidColor.parseColor("#009E60")
     "Vermelha" -> AndroidColor.parseColor("#ED1C24")
     else       -> AndroidColor.WHITE
-}
-
-private fun createArrowBitmap(color: Int, isGhost: Boolean = false): Bitmap {
-    val size = 64
-    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(bitmap)
-
-    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        this.color = color
-        style = Paint.Style.FILL
-        if (isGhost) alpha = 150 // Semi-transparent for ghost
-    }
-    
-    // Draw an arrow pointing UP (0 degrees bearing)
-    val path = Path().apply {
-        moveTo(size / 2f, 0f)                   // Top tip
-        lineTo(size.toFloat() - 10f, size.toFloat())  // Bottom right
-        lineTo(size / 2f, size * 0.7f)          // Bottom center intent
-        lineTo(10f, size.toFloat())             // Bottom left
-        close()
-    }
-    canvas.drawPath(path, paint)
-
-    val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        this.color = if (isGhost) AndroidColor.RED else AndroidColor.WHITE
-        style = Paint.Style.STROKE
-        strokeWidth = 5f
-        strokeJoin = Paint.Join.ROUND
-    }
-    canvas.drawPath(path, strokePaint)
-
-    if (isGhost) {
-        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            this.color = AndroidColor.RED
-            textSize = 28f
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-            textAlign = Paint.Align.CENTER
-        }
-        canvas.drawText("?", size / 2f, size * 0.6f, textPaint)
-    }
-
-    return bitmap
 }
 
 private fun createFriendBitmap(initial: String): Bitmap {
@@ -1758,69 +1962,34 @@ private fun setupMapLayers(context: android.content.Context, style: Style) {
         }
     }
 
-    // ── Station dots ───────────────────────────────────────────────────────────
-    if (style.getSource("stations-src") == null) {
-        val stationFeatures = JSONArray()
-        for ((id, coord) in coords) {
-            stationFeatures.put(
-                JSONObject()
-                    .put("type", "Feature")
-                    .put("geometry", JSONObject()
-                        .put("type", "Point")
-                        .put("coordinates", JSONArray().put(coord.lon).put(coord.lat)))
-                    .put("properties", JSONObject()
-                        .put("id", id)
-                        .put("name", coord.name))
-            )
-        }
-        val stationGeoJson = JSONObject()
-            .put("type", "FeatureCollection")
-            .put("features", stationFeatures)
-            .toString()
+    // ── Linhas pelo traçado real dos túneis (OpenStreetMap), em vez de retas entre as estações ─────────────
+    applyMetroTracks(style, com.example.metrotime.data.metro.MetroTracks.load(context))
 
-        style.addSource(GeoJsonSource("stations-src", stationGeoJson))
+    // ── Station dots (as do troço interrompido de uma perturbação ficam a cinzento) ─────────────────────
+    val addPorto = style.getSource("stations-src") == null
+    if (style.getSource("stations-src") == null) {
+        style.addSource(GeoJsonSource("stations-src", metroStationsCollection(emptySet())))
         style.addLayer(
             CircleLayer("stations-layer", "stations-src").withProperties(
                 circleRadius(5f),
-                circleColor(AndroidColor.WHITE),
+                circleColor(
+                    org.maplibre.android.style.expressions.Expression.switchCase(
+                        org.maplibre.android.style.expressions.Expression.eq(get("cut"), org.maplibre.android.style.expressions.Expression.literal(true)),
+                        org.maplibre.android.style.expressions.Expression.color(AndroidColor.parseColor("#8A8F98")),
+                        org.maplibre.android.style.expressions.Expression.color(AndroidColor.WHITE)
+                    )
+                ),
                 circleStrokeWidth(1.5f),
                 circleStrokeColor(AndroidColor.parseColor("#333333"))
             )
         )
     }
 
-    // Add generic white arrows
-    style.addImage("arrow-white", createArrowBitmap(AndroidColor.WHITE, false))
-    style.addImage("arrow-ghost", createArrowBitmap(AndroidColor.WHITE, true))
+    // ── Metro do Porto: linhas e estações iguais às de Lisboa (por baixo dos metros) ─────────────────────
+    if (addPorto) setupPortoMetroLayers(style)
 
-    // ── Per-line train layers (empty initially) ────────────────────────────────
-    for (lineName in LINE_NAMES) {
-        if (style.getSource("trains-src-$lineName") == null) {
-            style.addSource(GeoJsonSource("trains-src-$lineName", empty))
-            style.addLayer(
-                SymbolLayer("trains-layer-$lineName", "trains-src-$lineName").withProperties(
-                    iconImage(
-                        org.maplibre.android.style.expressions.Expression.switchCase(
-                            org.maplibre.android.style.expressions.Expression.eq(get("isGhost"), org.maplibre.android.style.expressions.Expression.literal(true)),
-                            org.maplibre.android.style.expressions.Expression.literal("arrow-ghost"),
-                            org.maplibre.android.style.expressions.Expression.literal("arrow-white")
-                        )
-                    ),
-                    iconRotate(get("bearing")),
-                    iconAllowOverlap(true),
-                    iconIgnorePlacement(true),
-                    iconSize(
-                        org.maplibre.android.style.expressions.Expression.interpolate(
-                            org.maplibre.android.style.expressions.Expression.linear(),
-                            org.maplibre.android.style.expressions.Expression.zoom(),
-                            org.maplibre.android.style.expressions.Expression.stop(10f, 0.4f),
-                            org.maplibre.android.style.expressions.Expression.stop(14f, 1.0f)
-                        )
-                    )
-                )
-            )
-        }
-    }
+    // ── Metros: andam pelo traçado (pontos de longe, carruagens de perto), brilho e etiqueta do último ─────
+    setupMetroLayers(style)
 
     // ── Friends layer ─────────────────────────────────────────────────────────
     if (style.getSource("friends-src") == null) {
@@ -1981,7 +2150,8 @@ private fun setupMapLayers(context: android.content.Context, style: Style) {
                     iconImage(get("icon")),
                     iconAllowOverlap(true),
                     iconIgnorePlacement(true),
-                    iconAnchor(org.maplibre.android.style.layers.Property.ICON_ANCHOR_BOTTOM),
+                    // O centro da bolinha é o sítio do autocarro
+                    iconAnchor(org.maplibre.android.style.layers.Property.ICON_ANCHOR_CENTER),
                     symbolSortKey(get("sort")),
                     iconSize(
                         org.maplibre.android.style.expressions.Expression.interpolate(
@@ -2010,6 +2180,9 @@ private fun setupMapLayers(context: android.content.Context, style: Style) {
         }
     }
 
+    // ── Outras redes (MobiCascais, barcos, Covilhã, Viseu…), por cima dos autocarros ─────────
+    setupRegionalLayers(style)
+
     // ── Comboios CP e percurso do comboio aberto (por cima de tudo) ────────────
     setupCpTopLayers(context, style)
 }
@@ -2017,13 +2190,16 @@ private fun setupMapLayers(context: android.content.Context, style: Style) {
 /**
  * Render all Carris bus stops on the map as subtle white dots.
  */
+/** A lista de paragens mais recente (as anteriores, ainda a ser preparadas, já não se mostram). */
+@Volatile private var allStopsGeneration = 0
+
 private fun updateAllBusStops(map: MapLibreMap, stops: List<com.example.metrotime.data.bus.BusStop>) {
     val style = map.style ?: return
     val source = style.getSourceAs<GeoJsonSource>("all-stops-src") ?: return
+    val generation = ++allStopsGeneration
 
     kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.Default) {
         try {
-            android.util.Log.d("BusMap", "updateAllBusStops called with ${stops.size} stops")
             val featureList = mutableListOf<org.maplibre.geojson.Feature>()
             for (stop in stops) {
                 if (stop.lat == 0.0 && stop.lon == 0.0) continue
@@ -2036,11 +2212,11 @@ private fun updateAllBusStops(map: MapLibreMap, stops: List<com.example.metrotim
                 feature.addStringProperty("operator", stop.operator)
                 featureList.add(feature)
             }
-            val fc = org.maplibre.geojson.FeatureCollection.fromFeatures(featureList)
-            
+            if (generation != allStopsGeneration) return@launch
+            // Milhares de paragens: o texto faz-se aqui; na thread principal o mapa só o recebe
+            val json = org.maplibre.geojson.FeatureCollection.fromFeatures(featureList).toJson()
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                source.setGeoJson(fc)
-                android.util.Log.d("BusMap", "updateAllBusStops: setGeoJson with ${featureList.size} features")
+                if (generation == allStopsGeneration) source.setGeoJson(json)
             }
         } catch (e: Exception) {
             android.util.Log.e("BusMap", "Error updating all bus stops", e)
@@ -2048,39 +2224,10 @@ private fun updateAllBusStops(map: MapLibreMap, stops: List<com.example.metrotim
     }
 }
 
-private fun updateTrainMarkers(map: MapLibreMap, trains: List<TrainPosition>) {
-    val style  = map.style ?: return
-    val byLine = trains.groupBy { it.line }
-
-    for (lineName in LINE_NAMES) {
-        val source     = style.getSourceAs<GeoJsonSource>("trains-src-$lineName") ?: continue
-        val lineTrains = byLine[lineName] ?: emptyList()
-
-        val features = JSONArray()
-        for (train in lineTrains) {
-            features.put(
-                JSONObject()
-                    .put("type", "Feature")
-                    .put("geometry", JSONObject()
-                        .put("type", "Point")
-                        .put("coordinates", JSONArray().put(train.lon).put(train.lat)))
-                    .put("properties", JSONObject()
-                        .put("trainId",     train.id)
-                        .put("line",        train.line)
-                        .put("destination", train.destination)
-                        .put("nextStation", train.nextStationName)
-                        .put("bearing",     train.bearing)
-                        .put("seconds",     train.secondsToNextStation)
-                        .put("isGhost",     train.isGhost))
-            )
-        }
-
-        val collection = JSONObject()
-            .put("type", "FeatureCollection")
-            .put("features", features)
-            .toString()
-
-        source.setGeoJson(collection)
+/** Os serviços de localização do Google demoram a arrancar na primeira vez: arrancam já, fora da thread principal. */
+internal fun warmUpLocation(context: android.content.Context) {
+    kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+        runCatching { com.google.android.gms.location.LocationServices.getFusedLocationProviderClient(context) }
     }
 }
 
@@ -2305,7 +2452,7 @@ private fun busStopSignBitmap(context: android.content.Context): Bitmap {
  * Autocarro no mapa: pílula na cor oficial da linha com o número, contorno branco e sombra para se ver
  * em qualquer fundo, e um bico em baixo que aponta para onde está o autocarro.
  */
-private fun busPillBitmap(context: android.content.Context, number: String, colorHex: String): Bitmap {
+internal fun busPillBitmap(context: android.content.Context, number: String, colorHex: String): Bitmap {
     val d = context.resources.displayMetrics.density
     val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = AndroidColor.parseColor(com.example.metrotime.data.bus.BusColors.textOn(colorHex))
@@ -2360,6 +2507,149 @@ private fun busPillBitmap(context: android.content.Context, number: String, colo
     return bitmap
 }
 
+/**
+ * Autocarro no mapa (opção B do design): a bolinha branca de sempre da Carris com o veículo desenhado e, encostada à
+ * direita, a etiqueta com o número na cor da linha. O centro da bolinha é o centro da imagem (é ele que fica no sítio
+ * do veículo). O aberto leva um aro na cor da linha. Sem setas. [kind]: autocarro, elétrico ou barco.
+ */
+internal fun busBallBitmap(
+    context: android.content.Context,
+    number: String?,
+    colorHex: String,
+    selected: Boolean,
+    kind: com.example.metrotime.data.regional.VehicleKind = com.example.metrotime.data.regional.VehicleKind.BUS
+): Bitmap {
+    val d = context.resources.displayMetrics.density
+    val lineColor = runCatching { AndroidColor.parseColor(colorHex) }.getOrDefault(AndroidColor.parseColor("#8C8C99"))
+    val label = number?.trim().orEmpty()
+    val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = AndroidColor.parseColor(com.example.metrotime.data.bus.BusColors.textOn(colorHex))
+        textSize = 12f * d
+        typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+        textAlign = Paint.Align.CENTER
+    }
+    val ballR = 15f * d
+    val margin = 20f * d
+    val labelH = 22f * d
+    val labelW = if (label.isEmpty()) 0f else maxOf(labelH, text.measureText(label) + 14f * d)
+    val labelLeft = 12f * d
+    val half = maxOf(margin, if (labelW > 0f) labelLeft + labelW + 3f * d else 0f)
+    val w = kotlin.math.ceil(2 * half).toInt()
+    val h = kotlin.math.ceil(2 * margin).toInt()
+    val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    val cx = w / 2f
+    val cy = h / 2f
+
+    // Sombra (ou, no aberto, o aro na cor da linha)
+    if (selected) {
+        canvas.drawCircle(cx, cy, 17f * d, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 4f * d
+            color = lineColor
+        })
+    } else {
+        canvas.drawCircle(cx, cy + 1f * d, 17f * d, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = AndroidColor.argb(89, 0, 0, 0) })
+    }
+    canvas.drawCircle(cx, cy, ballR, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = AndroidColor.WHITE })
+    canvas.drawCircle(cx, cy, ballR, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 1f * d
+        color = AndroidColor.parseColor("#E0E0E0")
+    })
+
+    // O veículo de frente (medidas do design, à volta do centro)
+    fun rect(l: Float, t: Float, r: Float, b: Float, radius: Float, hex: String) {
+        canvas.drawRoundRect(
+            android.graphics.RectF(cx + l * d, cy + t * d, cx + r * d, cy + b * d), radius * d, radius * d,
+            Paint(Paint.ANTI_ALIAS_FLAG).apply { color = AndroidColor.parseColor(hex) }
+        )
+    }
+    fun dot(x: Float, y: Float, r: Float, hex: String) {
+        canvas.drawCircle(cx + x * d, cy + y * d, r * d, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = AndroidColor.parseColor(hex) })
+    }
+    when (kind) {
+        com.example.metrotime.data.regional.VehicleKind.BOAT -> {
+            // Barco: casco e cabine
+            val hull = android.graphics.Path().apply {
+                moveTo(cx - 9f * d, cy + 1f * d)
+                lineTo(cx + 9f * d, cy + 1f * d)
+                lineTo(cx + 6f * d, cy + 7f * d)
+                lineTo(cx - 6f * d, cy + 7f * d)
+                close()
+            }
+            canvas.drawPath(hull, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = AndroidColor.parseColor("#333333") })
+            rect(-5f, -6f, 5f, 1.5f, 1.5f, "#333333")
+            rect(-3.5f, -4.5f, 3.5f, -1f, 1f, "#B0BEC5")
+            rect(-1f, -9.5f, 1f, -6f, 0.5f, "#555555")
+            rect(-8f, 8.5f, 8f, 9.8f, 0.6f, "#4FC3F7")
+        }
+        com.example.metrotime.data.regional.VehicleKind.BUS -> {
+            // O autocarro de frente (o símbolo "directions_bus"), centrado na bolinha
+            val bus = androidx.core.graphics.PathParser.createPathFromPathData(BUS_SYMBOL_PATH)
+            bus.fillType = android.graphics.Path.FillType.EVEN_ODD
+            val k = 0.98f * d
+            bus.transform(android.graphics.Matrix().apply {
+                setTranslate(-12f, -11.5f)
+                postScale(k, k)
+                postTranslate(cx, cy)
+            })
+            canvas.drawPath(bus, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = AndroidColor.parseColor("#1F1F1F") })
+        }
+        else -> {
+            val tram = kind == com.example.metrotime.data.regional.VehicleKind.TRAM
+            rect(-7f, -10f, 7f, 8f, 3f, "#333333")
+            if (tram) {
+                // Elétrico: o pantógrafo em cima
+                val pole = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = AndroidColor.parseColor("#555555")
+                    strokeWidth = 1.3f * d
+                    strokeCap = Paint.Cap.ROUND
+                }
+                canvas.drawLine(cx - 3f * d, cy - 10f * d, cx, cy - 13f * d, pole)
+                canvas.drawLine(cx + 3f * d, cy - 10f * d, cx, cy - 13f * d, pole)
+                canvas.drawLine(cx - 4f * d, cy - 13f * d, cx + 4f * d, cy - 13f * d, pole)
+            } else {
+                rect(-4.5f, -11.5f, 4.5f, -8.5f, 1.5f, "#555555")
+            }
+            rect(-5.5f, -7.5f, 5.5f, -0.5f, 1.5f, "#B0BEC5")
+            dot(-4.2f, 4.5f, 1.5f, "#FFC107")
+            dot(4.2f, 4.5f, 1.5f, "#FFC107")
+            rect(-6f, 7f, 6f, 9f, 1f, "#222222")
+        }
+    }
+
+    // A etiqueta com o número, encostada à bolinha
+    if (labelW > 0f) {
+        val r = android.graphics.RectF(cx + labelLeft, cy - labelH / 2f, cx + labelLeft + labelW, cy + labelH / 2f)
+        canvas.drawRoundRect(r, labelH / 2f, labelH / 2f, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = AndroidColor.WHITE
+            setShadowLayer(2.5f * d, 0f, 1f * d, AndroidColor.argb(128, 0, 0, 0))
+        })
+        val border = 2f * d
+        val inner = android.graphics.RectF(r.left + border, r.top + border, r.right - border, r.bottom - border)
+        canvas.drawRoundRect(inner, inner.height() / 2f, inner.height() / 2f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = lineColor })
+        val bounds = android.graphics.Rect()
+        text.getTextBounds(label, 0, label.length, bounds)
+        canvas.drawText(label, r.centerX(), r.centerY() - bounds.exactCenterY(), text)
+    }
+    return bitmap
+}
+
+/** O autocarro de frente (o "directions_bus" do Material, 24×24): carroçaria, para-brisas, faróis e rodas. */
+private const val BUS_SYMBOL_PATH =
+    "M4,16c0,0.88 0.39,1.67 1,2.22V20c0,0.55 0.45,1 1,1h1c0.55,0 1,-0.45 1,-1v-1h8v1c0,0.55 0.45,1 1,1h1c0.55,0 1,-0.45 1,-1v-1.78" +
+        "c0.61,-0.55 1,-1.34 1,-2.22V6c0,-3.5 -3.58,-4 -8,-4s-8,0.5 -8,4v10z" +
+        "M7.5,17c-0.83,0 -1.5,-0.67 -1.5,-1.5S6.67,14 7.5,14s1.5,0.67 1.5,1.5S8.33,17 7.5,17z" +
+        "M16.5,17c-0.83,0 -1.5,-0.67 -1.5,-1.5s0.67,-1.5 1.5,-1.5 1.5,0.67 1.5,1.5 -0.67,1.5 -1.5,1.5z" +
+        "M18,11H6V6h12v5z"
+
+/** Os elétricos da Carris (12E, 15E, 18E, 24E, 25E, 28E): a bolinha leva um elétrico em vez do autocarro. */
+private fun carrisKind(route: String?, operator: String?): com.example.metrotime.data.regional.VehicleKind =
+    if (operator.orEmpty().lowercase().let { it.isEmpty() || it == "carris" } && route.orEmpty().matches(Regex("\\d+E")))
+        com.example.metrotime.data.regional.VehicleKind.TRAM
+    else com.example.metrotime.data.regional.VehicleKind.BUS
+
 private fun updateBusMarkers(map: MapLibreMap, buses: List<LiveBus>, context: android.content.Context, colorHex: String?, selectedId: String? = null) {
     val style = map.style ?: run {
         android.util.Log.e("BusMap", "map.style is NULL!")
@@ -2382,11 +2672,12 @@ private fun updateBusMarkers(map: MapLibreMap, buses: List<LiveBus>, context: an
             // Pílula com o número na cor da linha (antes: o mesmo ícone amarelo para todas)
             val color = com.example.metrotime.data.bus.BusColors.normalize(colorHex)
                 ?: com.example.metrotime.data.bus.BusColors.forRoute(bus.routeShortName, bus.operator)
-            val iconId = "bus-pin-${bus.routeShortName}-$color"
-            if (style.getImage(iconId) == null) style.addImage(iconId, busPillBitmap(context, bus.routeShortName, color))
+            val selected = selectedId != null && bus.vehicleId == selectedId
+            val kind = carrisKind(bus.routeShortName, bus.operator)
+            val iconId = "bus-ball-${bus.routeShortName}-$color-$kind-$selected"
+            if (style.getImage(iconId) == null) style.addImage(iconId, busBallBitmap(context, bus.routeShortName, color, selected, kind))
             feature.addStringProperty("icon", iconId)
             feature.addStringProperty("vehicleId", bus.vehicleId ?: "")
-            val selected = selectedId != null && bus.vehicleId == selectedId
             feature.addBooleanProperty("selected", selected)
             feature.addNumberProperty("sort", if (selected) 1 else 0)
             feature.addStringProperty("routeShortName", bus.routeShortName ?: "")

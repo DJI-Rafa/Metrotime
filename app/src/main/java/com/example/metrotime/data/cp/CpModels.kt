@@ -86,7 +86,14 @@ data class CpVehicle(
     val destinationTime: String? = null,
     val destinationETA: String? = null,
     /** Rumo em graus (0 = norte), calculado pela Cloud Function a partir das duas últimas posições. */
-    val bearing: Double? = null
+    val bearing: Double? = null,
+    /**
+     * A última passagem registada pela CP (Cloud Function, do ruicosta): a estação, a hora real "HH:mm:ss" e se já
+     * saiu de lá (false = chegou e ainda lá está).
+     */
+    val passCode: String? = null,
+    val passTime: String? = null,
+    val passLeft: Boolean? = null
 )
 
 /** Atraso do veículo em minutos, arredondado. */
@@ -139,7 +146,9 @@ data class CpTripDetail(
     @Json(name = "status") val status: String? = null,
     @Json(name = "hasDisruptions") val hasDisruptions: Boolean? = false,
     @Json(name = "duration") val duration: String? = null,
-    @Json(name = "trainStops") val trainStops: List<CpTrainStop>? = null
+    @Json(name = "trainStops") val trainStops: List<CpTrainStop>? = null,
+    /** Sem a CP: veio da alternativa (ou da última resposta boa), com os atrasos pelo GPS dos comboios. */
+    @Transient val offline: Boolean = false
 ) {
     val effectiveService: CpServiceCode? get() = serviceCode ?: trainService
 }

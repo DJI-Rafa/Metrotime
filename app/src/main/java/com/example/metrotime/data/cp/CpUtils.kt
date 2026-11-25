@@ -169,3 +169,122 @@ object CpText {
     fun serviceLabel(code: String): String =
         SERVICE_LABELS[code] ?: code.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() }
 }
+
+/**
+ * Uma partida ou chegada tal como aparece no quadro da estação (CpStationActivity): a hora grande é a estimada
+ * pela CP (ETD/ETA) quando o comboio vai atrasado, com a prevista riscada; o atraso e a contagem contam-se pela
+ * hora efetiva (prevista + atraso). Os outros quadros (Perto de mim, As minhas estações, favoritas) usam isto
+ * para nunca dizerem uma hora diferente da do quadro da estação.
+ */
+data class CpBoardEntry(
+    val timed: CpTimedStop,
+    /** Hora prevista, com a data certa. */
+    val scheduled: LocalDateTime,
+    /** Hora a mostrar em grande. */
+    val shown: String,
+    /** Hora prevista riscada (só quando vai atrasado). */
+    val struck: String?,
+    /** Quando parte (ou chega) mesmo, pela regra do percurso do comboio ([CpTripClock.momentOf]). Ordena os quadros. */
+    val effective: LocalDateTime,
+    /** Minutos de atraso desta partida (ou chegada): esperada − prevista; null = sem dados em tempo real. */
+    val delayMinutes: Int?,
+    val suppressed: Boolean,
+    /** Minutos até à hora efetiva; 0 ou menos = "agora". */
+    val minutesLeft: Long
+) {
+    val stop: CpStationStop get() = timed.stop
+    val late: Boolean get() = !suppressed && (delayMinutes ?: 0) > 0
+
+    /** "agora", "17 min"; null se suprimido ou a mais de uma hora. */
+    val countdown: String? get() = when {
+        suppressed -> null
+        minutesLeft <= 0 -> "agora"
+        minutesLeft < 60 -> "$minutesLeft min"
+        else -> null
+    }
+
+    /** "Suprimido", "+4 min", "Previsto" ou "Na hora". */
+    val status: String get() = when {
+        suppressed -> "Suprimido"
+        late -> "+$delayMinutes min"
+        delayMinutes == null -> "Previsto"
+        else -> "Na hora"
+    }
+}
+
+object CpBoard {
+    private val HM = DateTimeFormatter.ofPattern("HH:mm")
+
+    /**
+     * Chegada e partida esperadas de um comboio numa estação, com a regra do percurso do comboio
+     * ([CpTripClock.knownDelay] e [CpTripClock.momentOf]): o quadro da estação e o ecrã do comboio dão a mesma hora.
+     */
+    fun expected(stop: CpStationStop, scheduledArrival: LocalDateTime?, scheduledDeparture: LocalDateTime?): CpTripClock.StopMoment {
+        val eta = scheduledArrival?.let { s -> stop.eta?.takeIf { CpTime.parseHm(it) != null }?.let { effectiveOf(s, it, null) } }
+        val etd = scheduledDeparture?.let { s -> stop.etd?.takeIf { CpTime.parseHm(it) != null }?.let { effectiveOf(s, it, null) } }
+        val known = CpTripClock.knownDelay(scheduledArrival, scheduledDeparture, eta, etd, stop.delay)
+        return CpTripClock.momentOf(scheduledArrival, scheduledDeparture, eta, etd, known ?: 0)
+    }
+
+    /** A hora [time] ("17:50") no dia de [at] (o da véspera se for muito depois, o do dia seguinte se muito antes). */
+    fun sameDay(at: LocalDateTime, time: String?): LocalDateTime? {
+        val t = CpTime.parseHm(time) ?: return null
+        var d = LocalDateTime.of(at.toLocalDate(), t)
+        if (d.isAfter(at.plusHours(12))) d = d.minusDays(1)
+        if (d.isBefore(at.minusHours(12))) d = d.plusDays(1)
+        return d
+    }
+
+    /** A linha de [t] no quadro de partidas ([departures]) ou de chegadas; null se o comboio não parte/chega aqui. */
+    fun entry(t: CpTimedStop, departures: Boolean, now: LocalDateTime): CpBoardEntry? {
+        val stop = t.stop
+        val scheduledArrival = t.dateTimeOf(stop.arrivalTime)
+        val scheduledDeparture = t.dateTimeOf(stop.departureTime)
+        val scheduled = (if (departures) scheduledDeparture else scheduledArrival) ?: return null
+        val suppressed = stop.supression != null || stop.delay == -1
+        val hasData = !suppressed && (stop.eta != null || stop.etd != null || (stop.delay ?: -1) >= 0)
+        val m = expected(stop, scheduledArrival, scheduledDeparture)
+        val effective = (if (departures) m.departure ?: m.arrival else m.arrival ?: m.departure) ?: scheduled
+        // Adiantado conta como a horas (e -1 é o código da CP para suprimido)
+        val delay = if (hasData) java.time.Duration.between(scheduled, effective).toMinutes().toInt().coerceAtLeast(0) else null
+        val late = !suppressed && (delay ?: 0) >= 1
+        return CpBoardEntry(
+            timed = t,
+            scheduled = scheduled,
+            shown = (if (late) effective else scheduled).format(HM),
+            struck = if (late) scheduled.format(HM) else null,
+            effective = if (suppressed) scheduled else effective,
+            delayMinutes = delay,
+            suppressed = suppressed,
+            minutesLeft = java.time.Duration.between(now, if (suppressed) scheduled else effective).toMinutes()
+        )
+    }
+
+    /**
+     * Hora efetiva: a estimada pela CP ("18:01", no dia certo: uma estimada muito antes da prevista é do dia
+     * seguinte), senão a prevista mais o atraso.
+     */
+    fun effectiveOf(scheduled: LocalDateTime, estimated: String?, delayMinutes: Int?): LocalDateTime {
+        val est = CpTime.parseHm(estimated)
+        if (est != null) {
+            var at = LocalDateTime.of(scheduled.toLocalDate(), est)
+            if (at.isBefore(scheduled.minusHours(12))) at = at.plusDays(1)
+            if (at.isAfter(scheduled.plusHours(12))) at = at.minusDays(1)
+            return at
+        }
+        return scheduled.plusMinutes((delayMinutes ?: 0).coerceAtLeast(0).toLong())
+    }
+
+    /** Hora esperada da partida ([departures]) ou chegada de [t], prevista para [at] (a mesma do quadro). */
+    fun effectiveOf(t: CpTimedStop, at: LocalDateTime, departures: Boolean): LocalDateTime =
+        entry(t, departures, at)?.effective ?: at
+
+    /**
+     * O quadro como no ecrã da estação: só os que ainda não partiram há mais de 5 min, por ordem de partida
+     * (ou chegada) efetiva: um comboio atrasado passa para depois dos que saem antes dele.
+     */
+    fun board(stops: List<CpTimedStop>, departures: Boolean, now: LocalDateTime): List<CpBoardEntry> =
+        stops.mapNotNull { entry(it, departures, now) }
+            .filter { CpTimetableWindow.isInWindow(it.scheduled.toLocalDate(), it.scheduled.toLocalTime(), it.delayMinutes, now) }
+            .sortedWith(compareBy<CpBoardEntry>({ it.effective }, { it.scheduled }))
+}

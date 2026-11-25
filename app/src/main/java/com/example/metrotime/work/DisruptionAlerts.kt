@@ -59,6 +59,7 @@ object DisruptionAlerts {
         if (lines.isEmpty() || !RemoteArrivalsSource.isMetroOperating()) return
         val statuses = RemoteArrivalsSource.fetchLineStatus()
         if (statuses.isEmpty()) return
+        com.example.metrotime.data.alerts.DisruptionLog.record(context, statuses)
 
         val p = prefs(context)
         val previous = readMetroState(p.getString("metroState", null))

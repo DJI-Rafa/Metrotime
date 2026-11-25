@@ -117,7 +117,7 @@ object AppUpdater {
 
             // O DownloadManager é outra app, por isso o receiver tem de ser exportado; o conteúdo do
             // broadcast não é confiado — o estado é confirmado no DownloadManager e o APK é verificado.
-            context.registerReceiver(onComplete, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE), Context.RECEIVER_EXPORTED)
+            androidx.core.content.ContextCompat.registerReceiver(context, onComplete, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE), androidx.core.content.ContextCompat.RECEIVER_EXPORTED)
         } catch (e: Exception) {
             e.printStackTrace()
             Toast.makeText(context, "Erro no download. A abrir no browser...", Toast.LENGTH_LONG).show()
@@ -131,12 +131,18 @@ object AppUpdater {
      */
     private fun isTrustedUpdate(context: Context, apk: File): Boolean {
         val pm = context.packageManager
-        val flags = PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong())
-        val archive: PackageInfo = pm.getPackageArchiveInfo(apk.absolutePath, flags) ?: return false
+        // As versões com PackageInfoFlags só existem no Android 13+; no 12 as antigas, com um Int
+        val modern = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU
+        val flags = PackageManager.GET_SIGNING_CERTIFICATES
+        val archive: PackageInfo = (
+            if (modern) pm.getPackageArchiveInfo(apk.absolutePath, PackageManager.PackageInfoFlags.of(flags.toLong()))
+            else @Suppress("DEPRECATION") pm.getPackageArchiveInfo(apk.absolutePath, flags)
+        ) ?: return false
         if (archive.packageName != context.packageName) return false
         if (archive.longVersionCode <= installedVersionCode(context)) return false
 
-        val installed = pm.getPackageInfo(context.packageName, flags)
+        val installed = if (modern) pm.getPackageInfo(context.packageName, PackageManager.PackageInfoFlags.of(flags.toLong()))
+        else @Suppress("DEPRECATION") pm.getPackageInfo(context.packageName, flags)
         val installedSigners = installed.signingInfo?.apkContentsSigners?.toSet().orEmpty()
         val archiveSigners = archive.signingInfo?.apkContentsSigners?.toSet().orEmpty()
         return installedSigners.isNotEmpty() && installedSigners == archiveSigners

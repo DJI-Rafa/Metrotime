@@ -45,7 +45,7 @@ import java.util.concurrent.TimeUnit
  * Single unified service that:
  *  1. Fetches station data (GPS or fixed station)
  *  2. Updates the widget + lock screen notification at a lightweight interval
- *  3. Re-fetches from the API every 15 seconds
+ *  3. Re-fetches the widgets' data (metro, bus stop, CP) every 10 seconds while the screen is on
  */
 class WidgetUpdateService : Service() {
 
@@ -57,7 +57,9 @@ class WidgetUpdateService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var loopJob: Job? = null
 
-    // Ecrã ligado: atualiza logo (o receiver declarado no manifest nunca recebia SCREEN_ON)
+    // Ecrã ligado: atualiza logo (o receiver declarado no manifest nunca recebia SCREEN_ON). Com o ecrã
+    // desligado os widgets não se atualizam, por isso ao acender estavam com os dados de quando se apagou
+    // (um autocarro "a chegar" que já tinha passado).
     private val screenOnReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (loopJob?.isActive != true) return
@@ -65,6 +67,20 @@ class WidgetUpdateService : Service() {
                 try {
                     refreshArrivals()
                     withContext(Dispatchers.Main) { redrawAll() }
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                }
+            }
+            scope.launch {
+                try {
+                    if (BusWidgetUpdater.hasWidgets(this@WidgetUpdateService)) BusWidgetUpdater.updateAll(this@WidgetUpdateService)
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                }
+            }
+            scope.launch {
+                try {
+                    CpWidgetUpdater.updateAll(this@WidgetUpdateService)
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
                 }
@@ -84,7 +100,8 @@ class WidgetUpdateService : Service() {
             setReferenceCounted(false)
         }
 
-        registerReceiver(screenOnReceiver, android.content.IntentFilter(Intent.ACTION_SCREEN_ON), Context.RECEIVER_NOT_EXPORTED)
+        // ContextCompat: as flags de exportação só existem no Android 13+ (a app instala-se desde o 12)
+        androidx.core.content.ContextCompat.registerReceiver(this, screenOnReceiver, android.content.IntentFilter(Intent.ACTION_SCREEN_ON), androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
         restoreTrainState()
 
         // Schedule WorkManager periodic keepalive as fallback
@@ -102,8 +119,21 @@ class WidgetUpdateService : Service() {
         private const val EXTRA_FROM_UI = "from_ui"
 
         private const val CHANNEL_ID = "metro_live"
+        /** Categoria da notificação discreta (a que o Android obriga enquanto o serviço corre); pode desligar-se. */
+        const val CHANNEL_BACKGROUND = "background"
         private const val NOTIFICATION_ID = 1
+
+        /** Abre, nas definições do Android, a categoria da notificação discreta (para a desligar). */
+        fun backgroundChannelSettings(context: Context): Intent =
+            Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                .putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, CHANNEL_BACKGROUND)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         private const val UI_REFRESH_INTERVAL_MS = 5_000L
+        /** Dados novos para os widgets (metro, paragem, CP) com o ecrã ligado. */
+        private const val WIDGET_REFRESH_MS = 10_000L
+        /** O mesmo em voltas do ciclo principal. */
+        private const val WIDGET_REFRESH_LOOPS = (WIDGET_REFRESH_MS / UI_REFRESH_INTERVAL_MS).toInt()
         private const val WAKE_LOCK_TIMEOUT_MS = 10 * 60 * 1000L
 
         /** [fromUi] = pedido feito por um ecrã visível da app (permite o tipo "location" no Android 14). */
@@ -159,12 +189,35 @@ class WidgetUpdateService : Service() {
                             // Registo de viagens: só no telemóvel, não precisa de sessão nem de partilhar
                             val tracking = Prefs.isTripTracking(this@WidgetUpdateService) && hasLocationPermission()
                             val following = CpFollow.current(this@WidgetUpdateService) != null
-                            // O aviso "prepara-te para sair" tem de chegar mesmo com o ecrã desligado
-                            updateWakeLock(sharing || tracking || following)
+                            val busFollowing = BusFollow.isActive(this@WidgetUpdateService)
+                            // Só os autocarros perto da hora prendem o telemóvel acordado (o batimento de 15 min
+                            // volta a olhar para os que faltam horas)
+                            val busSoon = busFollowing && BusFollow.hasSoon(this@WidgetUpdateService)
+                            val exitAlarm = ExitAlarm.current(this@WidgetUpdateService)
+                            val exitGps = exitAlarm?.isGps == true && hasLocationPermission()
+                            LiveDebug.loop.value = LiveDebug.Loop(System.currentTimeMillis(), loops, screenOn, sharing, tracking)
+                            // Os avisos ("prepara-te para sair", "o autocarro está a chegar") têm de chegar mesmo com o ecrã desligado
+                            updateWakeLock(sharing || tracking || following || busSoon || exitAlarm != null)
 
                             // Comboio seguido: verificado a cada minuto, com ou sem ecrã
                             if (following && loops % 12 == 0) {
                                 CpFollow.check(this@WidgetUpdateService)
+                            }
+
+                            // Autocarro seguido: a cada 30 s
+                            if (busFollowing && loops % 6 == 0) {
+                                BusFollow.check(this@WidgetUpdateService)
+                            }
+
+                            // Último metro/comboio para casa: a cada minuto (só faz alguma coisa à noite e longe de casa)
+                            // (um erro aqui não pode saltar o resto da volta: perturbações, widgets, localização)
+                            if (loops % 12 == 0) {
+                                try {
+                                    LastTripAlert.check(this@WidgetUpdateService)
+                                } catch (e: Exception) {
+                                    if (e is CancellationException) throw e
+                                    e.printStackTrace()
+                                }
                             }
 
                             // Perturbações no metro e avisos CP: com ou sem ecrã (os intervalos contam-se lá dentro)
@@ -172,25 +225,33 @@ class WidgetUpdateService : Service() {
                                 DisruptionAlerts.check(this@WidgetUpdateService)
                             }
 
-                            // Widget CP: a cada minuto, só com o ecrã ligado
-                            if (screenOn && loops % 12 == 0) {
+                            // Widget CP: a cada 10 s, só com o ecrã ligado
+                            if (screenOn && loops % WIDGET_REFRESH_LOOPS == 0) {
                                 CpWidgetUpdater.updateAll(this@WidgetUpdateService)
                             }
 
-                            // Widget da paragem: a cada 30 s, só com o ecrã ligado
-                            if (screenOn && loops % 6 == 0 && BusWidgetUpdater.hasWidgets(this@WidgetUpdateService)) {
+                            // Widget da paragem: a cada 10 s, só com o ecrã ligado (a 30 s dizia "a chegar"
+                            // quando o mapa já mostrava o autocarro depois da paragem)
+                            if (screenOn && loops % WIDGET_REFRESH_LOOPS == 0 && BusWidgetUpdater.hasWidgets(this@WidgetUpdateService)) {
                                 BusWidgetUpdater.updateAll(this@WidgetUpdateService)
                             }
 
-                            // Re-fetch from API every 15 seconds; se ainda não há estação (ex.: GPS falhou
+                            // Metro: dados novos a cada 10 s; se ainda não há estação (ex.: GPS falhou
                             // no arranque) volta a procurá-la — antes o widget ficava em "A carregar..."
-                            if (screenOn && loops > 0 && loops % 3 == 0) {
+                            if (screenOn && loops > 0 && loops % WIDGET_REFRESH_LOOPS == 0) {
                                 refreshArrivals()
                             }
 
-                            // A cada 30 s: localização para os amigos (partilha) e/ou para o registo de viagens
+                            // A cada 30 s: localização para os amigos (partilha), o registo de viagens e o aviso antes de sair
+                            val locResult = if (loops % 6 == 0 && (sharing || tracking || exitGps)) {
+                                Locator.getCurrentLocationWithSpeed(this@WidgetUpdateService)
+                            } else null
+                            locResult?.let {
+                                LiveDebug.fix.value = LiveDebug.Fix(
+                                    it.timeMs, it.latitude, it.longitude, it.accuracyM, it.speedMps.takeIf { s -> s >= 0f }?.let { s -> s * 3.6 }
+                                )
+                            }
                             if (loops % 6 == 0 && (sharing || tracking)) {
-                                val locResult = Locator.getCurrentLocationWithSpeed(this@WidgetUpdateService)
                                 val share = sharing && !Prefs.isMapSharingBlocked(this@WidgetUpdateService)
                                 if (locResult != null && uid != null) {
                                     if (share) {
@@ -207,11 +268,16 @@ class WidgetUpdateService : Service() {
                                     }
                                     // Comboio em que vais: para os amigos (se partilhas) e para as viagens (se registas)
                                     if (share || tracking) {
-                                        checkLocalUserOnTrain(uid, locResult.latitude, locResult.longitude, locResult.speedMps, share, tracking)
+                                        checkLocalUserOnTrain(uid, locResult.latitude, locResult.longitude, locResult.speedMps, share, tracking, locResult.accuracyM)
                                     }
                                 }
                                 // Viagens de metro: também sem leitura (no subterrâneo é isso que se espera)
                                 if (tracking) recordTripLocation(locResult)
+                            }
+
+                            // Aviso antes de sair: pelo GPS a cada 30 s, pelo relógio (metro) a cada volta
+                            if (exitAlarm != null && (!exitAlarm.isGps || loops % 6 == 0)) {
+                                ExitAlarm.check(this@WidgetUpdateService, locResult)
                             }
 
                             // Read friends' train status to send notifications
@@ -313,7 +379,8 @@ class WidgetUpdateService : Service() {
     }
 
     private fun redrawAll() {
-        notificationManager.notify(NOTIFICATION_ID, buildLiveNotification())
+        // A discreta não muda: só os tempos do metro precisam de ser redesenhados
+        if (Prefs.isLiveMetroNotification(this)) notificationManager.notify(NOTIFICATION_ID, buildLiveNotification())
         redrawWidget()
         redrawLockWidget()
     }
@@ -360,6 +427,7 @@ class WidgetUpdateService : Service() {
     // ─── Lock Screen / Notification ─────────────────────────────────
 
     private fun buildLiveNotification(): Notification {
+        if (!Prefs.isLiveMetroNotification(this)) return buildQuietNotification()
         val data = ArrivalsRepo.currentArrivals.value
         val viewsCollapsed = RemoteViews(packageName, R.layout.notification_lockscreen_collapsed)
         val viewsExpanded = RemoteViews(packageName, R.layout.notification_lockscreen_expanded)
@@ -422,9 +490,42 @@ class WidgetUpdateService : Service() {
             .build()
     }
 
+    /**
+     * A notificação que o Android obriga a mostrar enquanto o serviço corre (widgets, avisos de viagem, partilha
+     * com os amigos): discreta (sem som, sem ícone na barra, fora do ecrã de bloqueio) e numa categoria própria
+     * que se pode desligar sem perder nada. Tocar nela abre essa categoria nas definições do Android.
+     */
+    private fun buildQuietNotification(): Notification {
+        val open = PendingIntent.getActivity(
+            this, 4499, backgroundChannelSettings(this),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        return NotificationCompat.Builder(this, CHANNEL_BACKGROUND)
+            .setSmallIcon(R.drawable.ic_stat_metro)
+            .setContentTitle("Metrotime em segundo plano")
+            .setContentText("Widgets e avisos de viagem. Toca para esconder.")
+            .setOngoing(true)
+            .setSilent(true)
+            .setShowWhen(false)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setContentIntent(open)
+            .build()
+    }
+
     // ─── Channel & Helpers ──────────────────────────────────────────
 
     private fun createChannel() {
+        notificationManager.createNotificationChannel(
+            NotificationChannel(CHANNEL_BACKGROUND, "Em segundo plano", NotificationManager.IMPORTANCE_MIN).apply {
+                description = "Aviso obrigatório do Android enquanto a app atualiza os widgets e os avisos. Podes desligar esta categoria: tudo continua a funcionar."
+                lockscreenVisibility = Notification.VISIBILITY_SECRET
+                setShowBadge(false)
+                setSound(null, null)
+                enableVibration(false)
+            }
+        )
         val channel = NotificationChannel(CHANNEL_ID, "Metro ao Vivo", NotificationManager.IMPORTANCE_DEFAULT)
         channel.lockscreenVisibility = Notification.VISIBILITY_PUBLIC
         channel.setShowBadge(false)
@@ -446,14 +547,17 @@ class WidgetUpdateService : Service() {
     private var activeTrainName: String? = null
     private var activeTrainDest: String? = null
     private var trainPathMeters = 0.0          // distância realmente percorrida (soma dos troços)
+    /** Velocidades do GPS nos últimos ~25 s a bordo, e a maior mantida 20 s seguidos (para os distintivos). */
+    private val trainSpeeds = ArrayDeque<Pair<Long, Double>>()
+    private var trainTopKmh: Double? = null
     private var lockCandidateId: String? = null // comboio que bateu nas verificações anteriores
     private var lockCandidateHits = 0
     // Onde estávamos quando o candidato apareceu pela primeira vez (embarque, se não estávamos parados)
     private var candidateLat = 0.0
     private var candidateLon = 0.0
     private var candidateMs = 0L
-    // Verificações seguidas em que o comboio já não batia com a nossa posição
-    private var trainFarChecks = 0
+    // A bordo: última estação onde estiveste com o comboio e as contagens para saber quando saíste (TrainRide)
+    private var trainRide = com.example.metrotime.data.cp.TrainRide.State()
     // Traçado e paragens do comboio em que vais (para as estações e os km da viagem)
     private var trainTrack: com.example.metrotime.data.cp.CpTrack? = null
     private var trainStops: List<com.example.metrotime.data.cp.TrainMatcher.Stop> = emptyList()
@@ -472,6 +576,25 @@ class WidgetUpdateService : Service() {
 
     /** Posição conhecida de um comboio e há quantos segundos foi medida. */
     private data class TrainFix(val id: String, val lat: Double, val lon: Double, val ageSec: Double, val bearing: Double? = null)
+
+    /** Desde quando se vê cada comboio na mesma posição, e com que idade ela chegou da primeira vez. */
+    private data class FixSeen(val lat: Double, val lon: Double, val sinceMs: Long, val ageSec: Double)
+    private val trainFixSeen = mutableMapOf<String, FixSeen>()
+
+    /**
+     * A idade verdadeira de uma posição: a fonte (ruicosta) não diz quando a mediu, e a hora que vem com ela é a
+     * da cópia para o Firebase. Uma posição que não muda há 2 min tem pelo menos 2 min (o 529 ficou parado no
+     * mesmo ponto enquanto andava), e o comboio pode ter andado isso desde ela.
+     */
+    private fun withRealAge(fix: TrainFix, now: Long): TrainFix {
+        val seen = trainFixSeen[fix.id]
+        if (seen == null || seen.lat != fix.lat || seen.lon != fix.lon) {
+            trainFixSeen[fix.id] = FixSeen(fix.lat, fix.lon, now, fix.ageSec)
+            return fix
+        }
+        val age = seen.ageSec + (now - seen.sinceMs) / 1000.0
+        return if (age > fix.ageSec) fix.copy(ageSec = age) else fix
+    }
 
     /** Última posição de cada comboio vista aqui, para saber para onde vai (quando a CF não manda o rumo). */
     private val lastTrainFixes = mutableMapOf<String, Pair<Double, Double>>()
@@ -560,10 +683,14 @@ class WidgetUpdateService : Service() {
      * Entrar: a mais de 30 km/h, a menos de 150 m de uma linha de comboio, e o mesmo comboio a bater em 3
      * leituras seguidas — no troço entre onde foi visto e onde estaria agora, ao longo do traçado dele
      * (antes bastava estar a 4–8 km de um comboio no mesmo sentido, e um carro na autoestrada ao lado "ia
-     * no comboio"). Sair: o comboio deixa de bater e tu paras ou sais da linha. As estações de embarque e
-     * de saída são paragens desse comboio, e os km medem-se pelo traçado.
+     * no comboio"). Sair: pela tua localização ([com.example.metrotime.data.cp.TrainRide]) — só se sai numa
+     * estação, e em cima da linha continuas no comboio. As estações de embarque e de saída são paragens desse
+     * comboio, e os km medem-se pelo traçado.
      */
-    private suspend fun checkLocalUserOnTrain(uid: String, myLat: Double, myLon: Double, nativeSpeedMps: Float = -1f, share: Boolean = true, record: Boolean = false) {
+    private suspend fun checkLocalUserOnTrain(
+        uid: String, myLat: Double, myLon: Double, nativeSpeedMps: Float = -1f, share: Boolean = true, record: Boolean = false,
+        accuracyM: Float = 0f
+    ) {
         val now = System.currentTimeMillis()
         val prevLat = lastCheckLat
         val prevLon = lastCheckLon
@@ -597,6 +724,7 @@ class WidgetUpdateService : Service() {
             val db = FirebaseDatabase.getInstance(FIREBASE_DB_URL)
             val active = activeTrainId
             if (active != null) {
+                if (nativeSpeedMps >= 0f && accuracyM in 0f..60f) recordTrainSpeed(now, nativeSpeedMps * 3.6)
                 // Somar o troço desde a última leitura (descarta saltos de GPS impossíveis)
                 if (prevTime > 0) {
                     val step = distance(prevLat, prevLon, myLat, myLon).toDouble()
@@ -607,29 +735,40 @@ class WidgetUpdateService : Service() {
                 if (trainStops.isEmpty()) trainStops = loadTrainStops(active)
                 if (trainTrack == null) trainTrack = active.toIntOrNull()?.let { com.example.metrotime.data.cp.CpNetwork.trackForTrain(this, it) }
 
-                val fix = readTrainPositions(db, active).firstOrNull()
+                val fix = readTrainPositions(db, active).firstOrNull()?.let { withRealAge(it, now) }
                 val gap = fix?.let {
                     com.example.metrotime.data.cp.TrainMatcher.gap(
                         user, com.example.metrotime.data.cp.TrainMatcher.Train(it.id, it.lat, it.lon, it.ageSec, trainBearing(it)), trainTrack
                     )
                 }
-                if (gap != null && gap <= com.example.metrotime.data.cp.TrainMatcher.keepTolerance(trainTrack != null)) {
-                    trainFarChecks = 0
-                    TrainTrackingDebugger.log("✅ A bordo do $activeTrainName (a ${gap.toInt()} m do comboio)")
+                // Sais do comboio pela TUA localização (TrainRide): em cima da linha dele ou numa estação continuas
+                // nele; sais quando sais da estação para longe da linha. A posição do comboio só serve para ver se
+                // ele já vai longe de ti (ficaste na estação, ou mudaste de comboio na mesma linha).
+                val me = myLat to myLon
+                val railM = trainTrack?.takeIf { it.line.size >= 2 }?.let { t ->
+                    com.example.metrotime.data.cp.CpTrack.metres(me, t.pointAt(t.locate(me).s))
+                } ?: com.example.metrotime.data.cp.TrainMatcher.distanceToRail(railTracks, me)
+                val stops = trainStops.ifEmpty { cpStopsNear(me) }
+                val (nextRide, exit) = com.example.metrotime.data.cp.TrainRide.step(
+                    trainRide, com.example.metrotime.data.cp.TrainRide.Fix(myLat, myLon, accuracyM, now),
+                    stops, trainStops.lastOrNull(), railM, gap, fix?.ageSec
+                )
+                trainRide = nextRide
+                LiveDebug.onBoard.value = LiveDebug.OnBoard(
+                    now, active, activeTrainName, activeTrainDest, trainService, trainBoarding?.name, trainStartMs, trainPathMeters / 1000.0,
+                    trainTopKmh, trainStops.size, trainTrack != null, railM, gap, fix?.ageSec, trainRide.lastStation?.stop?.name,
+                    trainRide.awayFixes, trainRide.stationOffRailFixes, trainRide.apartChecks
+                )
+                if (exit == null) {
+                    val where = trainRide.lastStation?.stop?.name?.let { " · última estação: $it" } ?: ""
+                    TrainTrackingDebugger.log(
+                        "✅ A bordo do $activeTrainName (${railM.toInt()} m da linha; comboio ${gap?.let { "a ${it.toInt()} m" } ?: "sem posição"}$where)"
+                    )
                     publishTrain(uid, share, db)
                     saveTrainState()
                     return
                 }
-                trainFarChecks++
-                val offRail = com.example.metrotime.data.cp.TrainMatcher.distanceToRail(railTracks, myLat to myLon) > 300
-                TrainTrackingDebugger.log("⚠️ O comboio não bate (${gap?.toInt() ?: "sem posição"} m; ${"%.0f".format(smoothedSpeed)} km/h${if (offRail) ", fora da linha" else ""}) — $trainFarChecks")
-                // Saída: o comboio afastou-se e tu paraste ou saíste da linha; ou 2 min sem bater
-                val exited = (trainFarChecks >= 2 && (smoothedSpeed < 15.0 || offRail)) || trainFarChecks >= 4
-                if (!exited) {
-                    publishTrain(uid, share, db)
-                    return
-                }
-                finishTrain(uid, share, record, db, now, myLat, myLon)
+                finishTrain(uid, share, record, db, exit)
                 return
             }
 
@@ -637,6 +776,9 @@ class WidgetUpdateService : Service() {
             if (smoothedSpeed < com.example.metrotime.data.cp.TrainMatcher.MIN_SPEED_KMH) {
                 lockCandidateId = null
                 lockCandidateHits = 0
+                LiveDebug.search.value = LiveDebug.Search(
+                    now, smoothedSpeed, verdict = "Devagar demais: só se procura comboio a ${com.example.metrotime.data.cp.TrainMatcher.MIN_SPEED_KMH.toInt()} km/h ou mais"
+                )
                 return
             }
             val railM = com.example.metrotime.data.cp.TrainMatcher.distanceToRail(railTracks, myLat to myLon)
@@ -644,11 +786,16 @@ class WidgetUpdateService : Service() {
                 TrainTrackingDebugger.log("A ${"%.0f".format(smoothedSpeed)} km/h mas a ${railM.toInt()} m da linha de comboio: não é comboio")
                 lockCandidateId = null
                 lockCandidateHits = 0
+                LiveDebug.search.value = LiveDebug.Search(
+                    now, smoothedSpeed, railM,
+                    verdict = "Longe da linha de comboio (máx. ${com.example.metrotime.data.cp.TrainMatcher.MAX_RAIL_DISTANCE_M.toInt()} m): não é comboio"
+                )
                 return
             }
             val trains = readTrainPositions(db)
                 .filter { !(it.id == ignoredTrainId && now < ignoredUntil) }
                 .filter { distance(myLat, myLon, it.lat, it.lon) < 15_000 }
+                .map { withRealAge(it, now) }
                 .map { com.example.metrotime.data.cp.TrainMatcher.Train(it.id, it.lat, it.lon, it.ageSec, trainBearing(it)) }
             val best = com.example.metrotime.data.cp.TrainMatcher.best(user, trains) { id ->
                 id.toIntOrNull()?.let { com.example.metrotime.data.cp.CpNetwork.trackForTrain(this, it) }
@@ -657,6 +804,9 @@ class WidgetUpdateService : Service() {
                 TrainTrackingDebugger.log("Nenhum comboio bate com a tua posição.")
                 lockCandidateId = null
                 lockCandidateHits = 0
+                LiveDebug.search.value = LiveDebug.Search(
+                    now, smoothedSpeed, railM, trains.size, verdict = "Nenhum dos ${trains.size} comboios perto bate com a tua posição"
+                )
                 return
             }
             val (train, gap) = best
@@ -670,6 +820,11 @@ class WidgetUpdateService : Service() {
                 candidateMs = if (prevTime > 0) prevTime else now
             }
             TrainTrackingDebugger.log("🚂 Comboio ${train.id} a ${gap.toInt()} m — ${lockCandidateHits}/${com.example.metrotime.data.cp.TrainMatcher.LOCK_CHECKS}")
+            LiveDebug.search.value = LiveDebug.Search(
+                now, smoothedSpeed, railM, trains.size, train.id, lockCandidateHits, gap,
+                if (lockCandidateHits >= com.example.metrotime.data.cp.TrainMatcher.LOCK_CHECKS) "Entraste no comboio ${train.id}"
+                else "O comboio ${train.id} bate: falta${if (com.example.metrotime.data.cp.TrainMatcher.LOCK_CHECKS - lockCandidateHits > 1) "m" else ""} ${com.example.metrotime.data.cp.TrainMatcher.LOCK_CHECKS - lockCandidateHits} verificação(ões)"
+            )
             if (lockCandidateHits >= com.example.metrotime.data.cp.TrainMatcher.LOCK_CHECKS) startTrain(uid, share, db, train.id, now)
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
@@ -694,11 +849,25 @@ class WidgetUpdateService : Service() {
 
         // Embarque: onde estávamos parados (o cais) há menos de 15 min, ou onde o comboio apareceu
         val fromStill = lastStillTime > 0 && now - lastStillTime < 15 * 60 * 1000L
-        val boardPoint = if (fromStill) lastStillLat to lastStillLon else candidateLat to candidateLon
+        var boardPoint = if (fromStill) lastStillLat to lastStillLon else candidateLat to candidateLon
         trainBoarding = stationNear(boardPoint)
         trainStartMs = if (fromStill) lastStillTime else candidateMs.takeIf { it > 0 } ?: now
+        // Só se deu pelo comboio a meio do percurso: se a viagem anterior acabou numa paragem dele antes daqui
+        // (e ele partiu de lá depois), embarcaste lá — ex.: metro até Santa Apolónia e o IC só bateu em Riachos
+        if (!fromStill) {
+            TripHistoryManager.lastTripEnd(this, now)?.let { (point, endMs) ->
+                com.example.metrotime.data.cp.TrainMatcher.boardingFromPrevious(
+                    trainStops, trainTrack, point, endMs, lastCheckLat to lastCheckLon, now
+                )?.let { stop ->
+                    trainBoarding = stop
+                    trainStartMs = stop.departureMs ?: endMs
+                    boardPoint = stop.lat to stop.lon
+                    TrainTrackingDebugger.log("↩️ Embarque pela viagem anterior: ${stop.name}")
+                }
+            }
+        }
         trainPathMeters = distance(boardPoint.first, boardPoint.second, lastCheckLat, lastCheckLon).toDouble()
-        trainFarChecks = 0
+        trainRide = com.example.metrotime.data.cp.TrainRide.State()
         lockCandidateId = null
         lockCandidateHits = 0
         TrainTrackingDebugger.log("🎯 Vais no $activeTrainName para $activeTrainDest (embarque: ${trainBoarding?.name ?: "?"})")
@@ -707,20 +876,22 @@ class WidgetUpdateService : Service() {
         saveTrainState()
     }
 
-    /** Saímos do comboio: a viagem (embarque, saída, horas, serviço e km pelo traçado) e limpa tudo. */
-    private suspend fun finishTrain(uid: String, share: Boolean, record: Boolean, db: FirebaseDatabase, now: Long, myLat: Double, myLon: Double) {
-        // Saída: onde parámos depois do comboio (há menos de 5 min), senão onde estamos
-        val stillRecent = lastStillTime > 0 && now - lastStillTime < 5 * 60 * 1000L && lastStillTime >= trainStartMs
-        val exitPoint = if (stillRecent) lastStillLat to lastStillLon else myLat to myLon
-        val exitStop = stationNear(exitPoint)
-        val endMs = if (stillRecent) lastStillTime else now
+    /**
+     * Saímos do comboio: a viagem (embarque, saída, horas, serviço e km pelo traçado) e limpa tudo. A saída é a
+     * última estação onde estiveste com o comboio e a hora a que lá chegaste ([exit], do TrainRide).
+     */
+    private suspend fun finishTrain(uid: String, share: Boolean, record: Boolean, db: FirebaseDatabase, exit: com.example.metrotime.data.cp.TrainRide.Exit) {
+        val exitStop = exit.stop
+        val endMs = exit.endMs.coerceAtLeast(trainStartMs)
         val km = com.example.metrotime.data.cp.TrainMatcher.trackKm(trainTrack, trainBoarding, exitStop)
             ?: trainPathMeters / 1000.0
-        TrainTrackingDebugger.log("❌ Saíste do $activeTrainName em ${exitStop?.name ?: "?"}: ${"%.1f".format(km)} km")
+        TrainTrackingDebugger.log("❌ Saíste do $activeTrainName em ${exitStop?.name ?: "?"} (${exit.reason}): ${"%.1f".format(km)} km")
         if (record && km > 0.5) {
+            val delay = trainNumber?.toIntOrNull()?.let { n -> exitStop?.code?.let { arrivalDelayMin(n, it) } }
             TripHistoryManager.trainTrip(
                 this@WidgetUpdateService, trainBoarding?.asStation(), exitStop?.asStation(),
-                trainStartMs.takeIf { it > 0 } ?: endMs, endMs, km, trainService, trainNumber
+                trainStartMs.takeIf { it > 0 } ?: endMs, endMs, km, trainService, trainNumber,
+                topKmh = trainTopKmh, delayMin = delay, strikeDay = isStrikeDay(db)
             )
         }
         clearTrain(uid, share, db)
@@ -738,9 +909,12 @@ class WidgetUpdateService : Service() {
         trainTrack = null
         trainStops = emptyList()
         trainPathMeters = 0.0
-        trainFarChecks = 0
+        trainSpeeds.clear()
+        trainTopKmh = null
+        trainRide = com.example.metrotime.data.cp.TrainRide.State()
         lockCandidateId = null
         lockCandidateHits = 0
+        LiveDebug.onBoard.value = null
         if (share && uid != null && db != null) {
             db.getReference("locations").child(uid).updateChildren(mapOf("currentTrain" to null, "trainDestination" to null))
         }
@@ -762,17 +936,68 @@ class WidgetUpdateService : Service() {
 
     private fun com.example.metrotime.data.cp.TrainMatcher.Stop.asStation() = NearbyStation(code, name, "cp", "", lat, lon)
 
-    /** Paragens do comboio (da CP), com coordenadas; vazio se falhar. */
+    /** Estações da CP perto de um ponto, como paragens: para quando não se conseguiram as paragens do comboio. */
+    private suspend fun cpStopsNear(at: Pair<Double, Double>, maxM: Double = 5_000.0): List<com.example.metrotime.data.cp.TrainMatcher.Stop> =
+        cpStationsForTrips()
+            .filter { distance(at.first, at.second, it.lat, it.lon).toDouble() <= maxM }
+            .map { com.example.metrotime.data.cp.TrainMatcher.Stop(it.id, it.name, it.lat, it.lon) }
+
+    /** Paragens do comboio (da CP), com coordenadas e a hora a que parte de cada uma; vazio se falhar. */
+    /** Guarda a velocidade do GPS e, quando há 20 s seguidos acima de um valor, esse valor passa a ser o máximo mantido. */
+    private fun recordTrainSpeed(now: Long, kmh: Double) {
+        trainSpeeds.addLast(now to kmh)
+        while (trainSpeeds.isNotEmpty() && now - trainSpeeds.first().first > 25_000L) trainSpeeds.removeFirst()
+        val window = trainSpeeds.filter { now - it.first <= 20_000L }
+        if (window.size >= 3 && now - window.first().first >= 15_000L) {
+            val held = window.minOf { it.second }
+            trainTopKmh = maxOf(trainTopKmh ?: 0.0, held)
+        }
+    }
+
+    /** Minutos de atraso do comboio à chegada a [code] (as horas da CP); null sem dados. */
+    private suspend fun arrivalDelayMin(number: Int, code: String): Int? = runCatching {
+        kotlinx.coroutines.withTimeoutOrNull(8_000L) {
+            val (detail, date) = com.example.metrotime.data.cp.CpRepository.getTripDetail(number, null)
+            val stops = detail.trainStops.orEmpty()
+            val i = stops.indexOfLast { it.station?.code == code }.takeIf { it >= 0 } ?: return@withTimeoutOrNull null
+            val m = com.example.metrotime.data.cp.CpTripClock.moments(date, stops)[i]
+            val scheduled = m.scheduledArrival ?: m.scheduledDeparture ?: return@withTimeoutOrNull null
+            val real = m.arrival ?: m.departure ?: return@withTimeoutOrNull null
+            java.time.Duration.between(scheduled, real).toMinutes().toInt()
+        }
+    }.getOrNull()
+
+    /**
+     * Dia de greve ([com.example.metrotime.data.cp.CpStrike]): a CP anunciou greve para hoje (cp_avisos) e ela nota-se
+     * nos comboios (cp_suppressions e cp_vehicles). Sem os dados todos, não é.
+     */
+    private suspend fun isStrikeDay(db: FirebaseDatabase): Boolean = runCatching {
+        kotlinx.coroutines.withTimeoutOrNull(12_000L) {
+            val today = com.example.metrotime.data.cp.CpTime.today()
+            val notices = com.example.metrotime.data.cp.CpRepository.getNotices()
+            if (!com.example.metrotime.data.cp.CpStrike.announced(notices, today)) return@withTimeoutOrNull false
+            val suppressed = (db.getReference("cp_suppressions/count").get().await().value as? Number)?.toInt()
+                ?: return@withTimeoutOrNull false
+            val running = (db.getReference("cp_vehicles/count").get().await().value as? Number)?.toInt()
+                ?: return@withTimeoutOrNull false
+            com.example.metrotime.data.cp.CpStrike.felt(suppressed, running)
+        } ?: false
+    }.getOrDefault(false)
+
     private suspend fun loadTrainStops(trainId: String): List<com.example.metrotime.data.cp.TrainMatcher.Stop> = runCatching {
         val number = trainId.toIntOrNull() ?: return@runCatching emptyList()
-        val (detail, _) = com.example.metrotime.data.cp.CpRepository.getTripDetail(number, null)
-        detail.trainStops.orEmpty().mapNotNull { s ->
-            val lat = s.latitude?.toDoubleOrNull() ?: return@mapNotNull null
-            val lon = s.longitude?.toDoubleOrNull() ?: return@mapNotNull null
+        val (detail, date) = com.example.metrotime.data.cp.CpRepository.getTripDetail(number, null)
+        val stops = detail.trainStops.orEmpty()
+        val moments = runCatching { com.example.metrotime.data.cp.CpTripClock.moments(date, stops) }.getOrNull()
+        stops.mapIndexedNotNull { i, s ->
+            val lat = s.latitude?.toDoubleOrNull() ?: return@mapIndexedNotNull null
+            val lon = s.longitude?.toDoubleOrNull() ?: return@mapIndexedNotNull null
+            val departs = moments?.getOrNull(i)?.departureOrArrival
+                ?.atZone(com.example.metrotime.data.cp.CpTime.LISBON)?.toInstant()?.toEpochMilli()
             com.example.metrotime.data.cp.TrainMatcher.Stop(
-                s.station?.code ?: return@mapNotNull null,
+                s.station?.code ?: return@mapIndexedNotNull null,
                 com.example.metrotime.data.cp.formatStationName(s.station.designation ?: ""),
-                lat, lon
+                lat, lon, departs
             )
         }
     }.getOrDefault(emptyList())
@@ -818,6 +1043,9 @@ class WidgetUpdateService : Service() {
             .putFloat("pathMeters", trainPathMeters.toFloat())
             .putLong("savedMs", System.currentTimeMillis())
             .putString("boarding", b?.let { listOf(it.code, it.name, it.lat, it.lon).joinToString("|") })
+            // A última estação onde estiveste com o comboio (a de saída) e o último ponto em cima da linha
+            .putString("lastStation", trainRide.lastStation?.let { v -> listOf(v.stop.code, v.stop.name, v.stop.lat, v.stop.lon, v.arrivedMs).joinToString("|") })
+            .putString("lastOnRail", trainRide.lastOnRail?.let { (lat, lon) -> listOf(lat, lon, trainRide.lastOnRailMs).joinToString("|") })
             .apply()
     }
 
@@ -839,6 +1067,19 @@ class WidgetUpdateService : Service() {
         trainBoarding = p.getString("boarding", null)?.split("|")?.takeIf { it.size == 4 }?.let { (code, name, lat, lon) ->
             com.example.metrotime.data.cp.TrainMatcher.Stop(code, name, lat.toDoubleOrNull() ?: 0.0, lon.toDoubleOrNull() ?: 0.0)
         }
+        val lastStation = p.getString("lastStation", null)?.split("|")?.takeIf { it.size == 5 }?.let { (code, name, lat, lon, at) ->
+            val la = lat.toDoubleOrNull() ?: return@let null
+            val lo = lon.toDoubleOrNull() ?: return@let null
+            com.example.metrotime.data.cp.TrainRide.StationVisit(
+                com.example.metrotime.data.cp.TrainMatcher.Stop(code, name, la, lo), at.toLongOrNull() ?: return@let null
+            )
+        }
+        val onRail = p.getString("lastOnRail", null)?.split("|")?.takeIf { it.size == 3 }
+        trainRide = com.example.metrotime.data.cp.TrainRide.State(
+            lastStation = lastStation,
+            lastOnRail = onRail?.let { (lat, lon) -> (lat.toDoubleOrNull() ?: return@let null) to (lon.toDoubleOrNull() ?: return@let null) },
+            lastOnRailMs = onRail?.getOrNull(2)?.toLongOrNull() ?: 0L
+        )
     }
 
     private suspend fun checkFriendsTrainStatus(uid: String) {

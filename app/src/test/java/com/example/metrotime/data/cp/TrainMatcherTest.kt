@@ -72,6 +72,30 @@ class TrainMatcherTest {
     }
 
     @Test
+    fun boardingComesFromWhereYourLastTripEnded() {
+        val min = 60_000L
+        val t0 = 1_800_000_000_000L
+        val stops = listOf(
+            TrainMatcher.Stop("SA", "Lisboa - St. Apolónia", east(0.0).first, east(0.0).second, departureMs = t0 + 7 * min),
+            TrainMatcher.Stop("B", "Estação B", east(8_000.0).first, east(8_000.0).second, departureMs = t0 + 20 * min),
+            TrainMatcher.Stop("C", "Estação C", east(15_000.0).first, east(15_000.0).second, departureMs = t0 + 30 * min)
+        )
+        // O metro chegou a 300 m da estação às t0; o comboio só bateu aos 12 km, às t0 + 25 min
+        val metro = (east(0.0).first + 300 / 111_320.0) to east(0.0).second
+        val board = TrainMatcher.boardingFromPrevious(stops, track, metro, t0, east(12_000.0), t0 + 25 * min)
+        assertEquals("SA", board?.code)
+        assertEquals(t0 + 7 * min, board?.departureMs)
+        // Chegaste depois de o comboio partir: não foi aí que embarcaste
+        assertNull(TrainMatcher.boardingFromPrevious(stops, track, metro, t0 + 15 * min, east(12_000.0), t0 + 25 * min))
+        // A viagem anterior acabou longe de qualquer paragem dele
+        assertNull(TrainMatcher.boardingFromPrevious(stops, track, east(4_000.0), t0, east(12_000.0), t0 + 25 * min))
+        // A paragem fica depois de onde estás (não podes ter embarcado à tua frente)
+        assertNull(TrainMatcher.boardingFromPrevious(stops, track, east(15_000.0), t0, east(12_000.0), t0 + 35 * min))
+        // Sem traçado, pela ordem das paragens
+        assertEquals("SA", TrainMatcher.boardingFromPrevious(stops, null, metro, t0, east(12_000.0), t0 + 25 * min)?.code)
+    }
+
+    @Test
     fun distanceToTheRailway() {
         val onTrack = east(6_000.0)
         assertTrue(TrainMatcher.distanceToRail(listOf(track), onTrack) < 1.0)

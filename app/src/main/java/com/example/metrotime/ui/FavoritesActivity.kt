@@ -422,20 +422,16 @@ fun CpNextDepartures(stationCode: String) {
             val now = com.example.metrotime.data.cp.CpTime.now()
             val stops = runCatching { com.example.metrotime.data.cp.CpRepository.getTimetableWindow(stationCode, now).stops }.getOrNull()
             if (stops != null) {
-                lines = stops.mapNotNull { timed ->
-                    val at = timed.dateTimeOf(timed.stop.departureTime) ?: return@mapNotNull null
-                    if (!com.example.metrotime.data.cp.CpTimetableWindow.isInWindow(at.toLocalDate(), at.toLocalTime(), timed.stop.delay, now)) return@mapNotNull null
-                    timed to at
-                }.sortedBy { it.second }.take(3).map { (timed, at) ->
-                    val stop = timed.stop
-                    val delay = stop.delay ?: 0
+                lines = com.example.metrotime.data.cp.CpBoard.board(stops, departures = true, now = now).take(3).map { e ->
+                    val stop = e.stop
+                    val delay = e.delayMinutes ?: 0
                     val (status, color) = when {
-                        stop.supression != null || delay == -1 -> "suprimido" to Color(0xFFFF5252)
+                        e.suppressed -> "suprimido" to Color(0xFFFF5252)
                         delay >= 2 -> "+$delay" to (if (delay > 5) Color(0xFFFF5252) else Color(0xFFFFC107))
                         else -> "" to Color.LightGray
                     }
                     Triple(
-                        "${at.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))}  ${com.example.metrotime.data.cp.CpService.shortName(stop.trainService?.code)}",
+                        "${e.shown}  ${com.example.metrotime.data.cp.CpService.shortName(stop.trainService?.code)}",
                         com.example.metrotime.data.cp.formatStationName(stop.trainDestination?.designation ?: "?") + if (status.isNotEmpty()) "  $status" else "",
                         color
                     )

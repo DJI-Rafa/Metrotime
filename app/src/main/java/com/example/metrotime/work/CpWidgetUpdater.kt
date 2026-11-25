@@ -73,27 +73,22 @@ object CpWidgetUpdater {
         val open = WidgetViews.activity(context, RC_OPEN, CpStationActivity.newIntent(context, code, rawName))
 
         val now = CpTime.now()
-        val stops = withTimeoutOrNull(9_000) {
-            runCatching { CpRepository.getTimetableWindow(code, now).stops }.getOrNull()
+        val result = withTimeoutOrNull(9_000) {
+            runCatching { CpRepository.getTimetableWindow(code, now) }.getOrNull()
         }
+        val stops = result?.stops
         val departures: List<Departure>
         val at: String
         val offline: Boolean
         if (stops != null) {
-            departures = stops.mapNotNull { timed ->
-                val time = timed.dateTimeOf(timed.stop.departureTime) ?: return@mapNotNull null
-                if (!CpTimetableWindow.isInWindow(time.toLocalDate(), time.toLocalTime(), timed.stop.delay, now)) return@mapNotNull null
-                timed to time
-            }.sortedBy { it.second }.take(4).map { (timed, time) ->
-                val stop = timed.stop
-                val suppressed = stop.supression != null || stop.delay == -1
-                val (status, state) = WidgetRows.cpStatus(stop.delay, suppressed)
-                val color = stateColor(state)
-                val late = !suppressed && (stop.delay ?: 0) > 0
+            // As mesmas linhas do quadro da estação e do ecrã do comboio (hora esperada, prevista riscada, atraso)
+            departures = com.example.metrotime.data.cp.CpBoard.board(stops, departures = true, now = now).take(4).map { e ->
+                val stop = e.stop
+                val (status, state) = WidgetRows.cpStatus(e.delayMinutes, e.suppressed)
                 val code4 = stop.trainService?.code
                 Departure(
-                    time = (if (late) time.plusMinutes(stop.delay!!.toLong()) else time).format(HM),
-                    planned = if (late) time.format(HM) else null,
+                    time = e.shown,
+                    planned = e.struck,
                     destination = formatStationName(stop.trainDestination?.designation ?: "?"),
                     service = CpService.shortName(code4),
                     serviceColor = getServiceColor(code4).toArgb(),
@@ -102,13 +97,15 @@ object CpWidgetUpdater {
                         stop.platform?.takeIf { it.isNotBlank() && it != "0" }?.let { "Linha $it" }
                     ).joinToString(" · "),
                     status = status,
-                    statusColor = color,
-                    suppressed = suppressed
+                    statusColor = stateColor(state),
+                    suppressed = e.suppressed
                 )
             }
-            at = now.format(HM)
-            offline = false
-            lastGood = LastGood(code, departures, at, System.currentTimeMillis())
+            // Sem a CP: as horas da última resposta boa com os atrasos pelo GPS (como no quadro da estação)
+            offline = result?.offline == true
+            at = if (offline) result?.savedAt?.let { java.time.Instant.ofEpochMilli(it).atZone(CpTime.LISBON).format(HM) } ?: now.format(HM)
+            else now.format(HM)
+            if (!offline) lastGood = LastGood(code, departures, at, System.currentTimeMillis())
         } else {
             val cached = lastGood?.takeIf { it.code == code && System.currentTimeMillis() - it.millis < 10 * 60_000 }
             if (cached == null) {
@@ -149,7 +146,7 @@ object CpWidgetUpdater {
         refresh: android.app.PendingIntent,
         open: android.app.PendingIntent
     ): RemoteViews {
-        val ago = if (offline) "sem rede · $at" else "às $at"
+        val ago = if (offline) "sem CP · $at" else "às $at"
         val agoColor = if (offline) WidgetViews.ORANGE else WidgetViews.SECONDARY
 
         fun large(maxRows: Int): RemoteViews {

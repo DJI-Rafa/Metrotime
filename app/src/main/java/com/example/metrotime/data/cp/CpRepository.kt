@@ -2,6 +2,8 @@ package com.example.metrotime.data.cp
 
 import android.content.Context
 import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
+import com.google.firebase.database.ValueEventListener
 import com.google.firebase.database.FirebaseDatabase
 import com.squareup.moshi.JsonAdapter
 import com.squareup.moshi.Moshi
@@ -10,6 +12,11 @@ import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -21,8 +28,16 @@ import java.time.LocalDateTime
 import java.time.LocalTime
 import java.util.concurrent.ConcurrentHashMap
 
-/** Resultado da janela de horários de uma estação. */
-data class CpTimetableResult(val stops: List<CpTimedStop>, val messages: List<String>)
+/**
+ * Resultado da janela de horários de uma estação. [offline]: a CP não respondeu e são as horas da última resposta
+ * boa ([savedAt], ms), com o atraso de cada comboio pelo GPS (o mesmo do mapa e do ecrã do comboio).
+ */
+data class CpTimetableResult(
+    val stops: List<CpTimedStop>,
+    val messages: List<String>,
+    val offline: Boolean = false,
+    val savedAt: Long? = null
+)
 
 /**
  * Ponto único de acesso aos dados da CP:
@@ -78,6 +93,10 @@ object CpRepository {
             }
         }
 
+    /** A lista de estações que já se tem (em memória ou em disco, mesmo antiga), sem ir à rede; null se nunca chegou. */
+    fun cachedStations(context: Context): List<CpStation>? =
+        memStations ?: readStationsCache(File(context.applicationContext.filesDir, STATIONS_FILE))
+
     private fun readStationsCache(file: File): List<CpStation>? =
         if (!file.exists()) null
         else runCatching { stationsAdapter.fromJson(file.readText()) }.getOrNull()?.takeIf { it.isNotEmpty() }
@@ -103,7 +122,24 @@ object CpRepository {
         stationCode: String,
         now: LocalDateTime,
         aheadHours: Long = CpTimetableWindow.AHEAD_HOURS
-    ): CpTimetableResult =
+    ): CpTimetableResult = withContext(Dispatchers.IO) {
+        val key = "$stationCode|$aheadHours"
+        try {
+            fetchTimetableWindow(stationCode, now, aheadHours).also { boards[key] = System.currentTimeMillis() to it.stops }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            // A CP falhou: as horas da última resposta boa desta estação (até 6 h), com o atraso pelo GPS
+            val (savedAt, stops) = boards[key]?.takeIf { System.currentTimeMillis() - it.first < BOARD_KEEP_MS } ?: throw e
+            val vehicles = runCatching { getActiveVehicles() }.getOrDefault(emptyList())
+            CpTimetableResult(CpFallback.withVehicleDelays(stops, vehicles, now), emptyList(), offline = true, savedAt = savedAt)
+        }
+    }
+
+    /** Última resposta boa de cada estação (e janela): o que se mostra quando a CP não responde. */
+    private val boards = ConcurrentHashMap<String, Pair<Long, List<CpTimedStop>>>()
+    private const val BOARD_KEEP_MS = 6L * 60 * 60 * 1000
+
+    private suspend fun fetchTimetableWindow(stationCode: String, now: LocalDateTime, aheadHours: Long): CpTimetableResult =
         withContext(Dispatchers.IO) {
             val queries = CpTimetableWindow.queriesFor(now, aheadHours)
             val responses = supervisorScope {
@@ -164,16 +200,28 @@ object CpRepository {
             val date = CpTime.parseDate(runDate) ?: CpTime.today()
             try {
                 val primary = CpApi.service.getTripDetail(trainNumber, date.toString())
-                if (primary.trainStops.isNullOrEmpty()) {
+                val result = if (primary.trainStops.isNullOrEmpty()) {
                     val previousDate = date.minusDays(1)
                     val previous = CpApi.service.getTripDetail(trainNumber, previousDate.toString())
                     if (!previous.trainStops.isNullOrEmpty()) previous to previousDate else primary to date
                 } else primary to date
+                if (!result.first.trainStops.isNullOrEmpty()) trips[trainNumber] = result
+                result
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                (RuicostaApi.service.getTrain(trainNumber).fixed ?: throw e) to date
+                // A CP falhou: a alternativa (ruicosta) ou a última resposta boa, e nas paragens que ainda faltam o
+                // atraso pelo GPS do comboio — o mesmo que os quadros das estações usam sem a CP
+                val (trip, tripDate) = runCatching { RuicostaApi.service.getTrain(trainNumber).fixed }.getOrNull()
+                    ?.takeIf { !it.trainStops.isNullOrEmpty() }?.let { it to date }
+                    ?: trips[trainNumber]
+                    ?: throw e
+                val vehicle = runCatching { getActiveVehicles() }.getOrDefault(emptyList()).firstOrNull { it.trainNumber == trainNumber }
+                CpFallback.withVehicleDelay(trip, vehicle).copy(offline = true) to tripDate
             }
         }
+
+    /** Última resposta boa de cada comboio. */
+    private val trips = ConcurrentHashMap<Int, Pair<CpTripDetail, java.time.LocalDate>>()
 
     // ── Avisos ─────────────────────────────────────────────────────────────────
 
@@ -205,8 +253,6 @@ object CpRepository {
      * de 5 min, vai diretamente ao comboios.live. Aplica sempre o mesmo filtro de "fantasmas".
      */
     suspend fun getActiveVehicles(): List<CpVehicle> = withContext(Dispatchers.IO) {
-        val today = CpTime.today()
-
         val fromFirebase: List<CpVehicle>? = try {
             val snap = withTimeoutOrNull(10_000) {
                 FirebaseDatabase.getInstance(FIREBASE_URL).getReference("cp_vehicles").get().await()
@@ -221,9 +267,82 @@ object CpRepository {
             null
         }
 
-        val vehicles = fromFirebase ?: ComboiosLiveApi.service.getVehicles().vehicles.orEmpty()
+        clean(fromFirebase ?: ComboiosLiveApi.service.getVehicles().vehicles.orEmpty())
+    }
 
-        vehicles
+    /** Os comboios de uma leitura e a hora a que os dados são (ms): a da Cloud Function ou a da leitura direta. */
+    data class VehiclesUpdate(val vehicles: List<CpVehicle>, val dataAt: Long)
+
+    /**
+     * Os comboios em circulação, em tempo real: escuta `cp_vehicles` e emite logo que a Cloud Function escreve (a cada
+     * minuto). Antes a app perguntava de 30 em 30 s, o que juntava até mais 30 s de atraso ao minuto da função.
+     * Sem dados frescos do Firebase (mais de 5 min: função parada, Firebase inacessível) vai diretamente ao
+     * comboios.live, logo e depois de 30 em 30 s, até o Firebase voltar. Larga a ligação quando deixa de ser recolhido.
+     */
+    fun liveVehicles(): Flow<VehiclesUpdate> = channelFlow {
+        val snapshots = Channel<DataSnapshot?>(Channel.CONFLATED)
+        val ref = FirebaseDatabase.getInstance(FIREBASE_URL).getReference("cp_vehicles")
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) { snapshots.trySend(snapshot) }
+            override fun onCancelled(error: DatabaseError) { snapshots.trySend(null) }
+        }
+        ref.addValueEventListener(listener)
+        try {
+            var freshAt = 0L
+            var first = true
+            while (isActive) {
+                // A primeira resposta do Firebase: até 10 s; depois, a função escreve a cada minuto
+                val snap = withTimeoutOrNull(if (first) 10_000L else 30_000L) { snapshots.receive() }
+                first = false
+                val now = System.currentTimeMillis()
+                val updatedAt = (snap?.child("updatedAt")?.value as? Number)?.toLong() ?: 0L
+                if (snap != null && now - updatedAt < VEHICLES_STALE_MS) {
+                    freshAt = now
+                    send(VehiclesUpdate(clean(snap.child("vehicles").children.mapNotNull { parseVehicle(it) }), updatedAt))
+                } else if (now - freshAt >= VEHICLES_STALE_MS) {
+                    val direct = try {
+                        ComboiosLiveApi.service.getVehicles().vehicles.orEmpty()
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        null
+                    }
+                    if (direct != null) send(VehiclesUpdate(clean(direct), now))
+                }
+            }
+        } finally {
+            ref.removeEventListener(listener)
+        }
+    }.flowOn(Dispatchers.IO)
+
+    /**
+     * As paragens de cada comboio (cp_routes, escrito pela Cloud Function), em tempo real, por número. Sem o nó (função
+     * antiga) ou sem permissão, dá um mapa vazio: os comboios ficam no GPS, como antes.
+     */
+    fun liveRoutes(): Flow<Map<Int, CpRoute>> = channelFlow {
+        val snapshots = Channel<DataSnapshot?>(Channel.CONFLATED)
+        val ref = FirebaseDatabase.getInstance(FIREBASE_URL).getReference("cp_routes").child("trains")
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) { snapshots.trySend(snapshot) }
+            override fun onCancelled(error: DatabaseError) { snapshots.trySend(null) }
+        }
+        ref.addValueEventListener(listener)
+        try {
+            for (snap in snapshots) {
+                val routes = snap?.children?.mapNotNull { c ->
+                    val number = c.key?.toIntOrNull() ?: return@mapNotNull null
+                    CpRoute.parse(c.value as? String)?.let { number to it }
+                }?.toMap().orEmpty()
+                send(routes)
+            }
+        } finally {
+            ref.removeEventListener(listener)
+        }
+    }.flowOn(Dispatchers.IO)
+
+    /** O mesmo filtro de "fantasmas" para todas as leituras, sem repetidos, por número. */
+    private fun clean(vehicles: List<CpVehicle>): List<CpVehicle> {
+        val today = CpTime.today()
+        return vehicles
             .filter {
                 CpVehicleFilter.isActive(
                     status = it.status,
@@ -270,7 +389,10 @@ object CpRepository {
             originETA = s.str("originETA"),
             destinationTime = s.str("destinationTime"),
             destinationETA = s.str("destinationETA"),
-            bearing = (s.child("bearing").value as? Number)?.toDouble()
+            bearing = (s.child("bearing").value as? Number)?.toDouble(),
+            passCode = s.str("passCode"),
+            passTime = s.str("passTime"),
+            passLeft = s.child("passLeft").value as? Boolean
         )
     }
 }

@@ -5,6 +5,8 @@ import android.content.SharedPreferences
 import android.util.AtomicFile
 import com.example.metrotime.data.MapConfiguration
 import com.example.metrotime.data.MetroNetwork
+import com.example.metrotime.data.cp.CpNetwork
+import com.example.metrotime.data.cp.TrainMatcher
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -69,8 +71,41 @@ object TripHistoryManager {
         val loaded = runCatching { parse(String(file(context).readFully(), Charsets.UTF_8)) }.getOrNull()
             ?: Data(mutableListOf(), mutableListOf(), 0.0)
         migrate(context, loaded)
+        // Viagens de comboio guardadas aos bocados (a app perdia o comboio nas paragens): uma só
+        val merged = TripRules.mergeTrainLegs(loaded.trips) { trainKm(context, it) }
+        if (merged !== loaded.trips) {
+            loaded.trips.clear()
+            loaded.trips.addAll(merged)
+            save(context, loaded)
+        }
         cache = loaded
         return loaded
+    }
+
+    /** Km de uma viagem de comboio pelo traçado do comboio, entre as estações de partida e de chegada. */
+    private fun trainKm(context: Context, trip: Trip): Double? = runCatching {
+        val number = trip.trainNumber?.toIntOrNull() ?: return@runCatching null
+        val toId = trip.toId ?: return@runCatching null
+        val track = CpNetwork.trackForTrain(context, number) ?: return@runCatching null
+        val stations = CpNetwork.stations(context)
+        fun stop(code: String) = stations.firstOrNull { it.code == code }?.let { TrainMatcher.Stop(it.code, it.name, it.lat, it.lon) }
+        TrainMatcher.trackKm(track, stop(trip.fromId), stop(toId))
+    }.getOrNull()
+
+    /**
+     * Onde e quando acabou a última viagem (nas últimas [maxAgeMs]): para saber onde embarcaste num comboio
+     * de que só se deu conta a meio do percurso.
+     */
+    fun lastTripEnd(context: Context, nowMs: Long, maxAgeMs: Long = 4 * 60 * 60 * 1000L): Pair<Pair<Double, Double>, Long>? {
+        val last = trips(context).filter { it.endMs != null && it.endMs <= nowMs && nowMs - it.endMs <= maxAgeMs }
+            .maxByOrNull { it.endMs!! } ?: return null
+        val toId = last.toId ?: return null
+        val point = when (last.mode) {
+            "metro" -> MapConfiguration.STATION_COORDS[toId]?.let { it.lat to it.lon }
+            "cp" -> runCatching { CpNetwork.stations(context).firstOrNull { it.code == toId } }.getOrNull()?.let { it.lat to it.lon }
+            else -> null
+        } ?: return null
+        return point to last.endMs!!
     }
 
     /** As visitas antigas passam a viagens (uma vez); os km extra dos comboios ficam à parte, sem data. */
@@ -104,8 +139,10 @@ object TripHistoryManager {
     @Synchronized
     fun addTrip(context: Context, trip: Trip): Boolean {
         val d = data(context)
-        val last = d.trips.lastOrNull { it.mode == trip.mode }
-        val chained = last?.let { TripRules.chain(it, trip) }
+        // Comboio: só se junta ao troço imediatamente antes (com outra viagem pelo meio, saíste do comboio)
+        val last = if (trip.mode == "cp") d.trips.lastOrNull { it.startMs <= trip.startMs }
+        else d.trips.lastOrNull { it.mode == trip.mode }
+        val chained = last?.let { TripRules.chain(it, trip) { t -> trainKm(context, t) } }
         if (chained != null) {
             d.trips[d.trips.indexOf(last)] = chained
         } else {
@@ -164,10 +201,18 @@ object TripHistoryManager {
                 .putLong(KEY_LAST_USER_TIME, fix.timeMs)
                 .apply()
         }
-        val (state, detection) = TripDetector.step(detectorState(context), fix, metroStops)
+        val current = detectorState(context)
+        // Sem leitura boa (no subterrâneo, dentro de um prédio) só o tempo conta: uma viagem sem notícias há uma
+        // hora acaba na última estação onde se apareceu
+        val good = fix != null && fix.accuracyM <= TripDetector.GOOD_ACCURACY_M
+        val (state, detections) = if (good) TripDetector.step(current, fix, metroStops)
+        else TripDetector.tick(current, fix?.timeMs ?: System.currentTimeMillis(), metroStops)
         saveDetectorState(context, state)
-        detection ?: return null
+        return detections.mapNotNull { record(context, it) }.lastOrNull()
+    }
 
+    /** Guarda uma viagem detetada: conta logo, fecha uma começada à mão, ou fica à espera de confirmação (devolvida). */
+    private fun record(context: Context, detection: TripDetector.Detection): PendingTrip? {
         val trip = TripRules.metroTrip("m_${detection.startMs}", detection.from, detection.to, detection.startMs, detection.endMs, "auto")
         // Começada à mão: esta deteção dá-lhe o destino (mesmo que fraca, a origem já foi confirmada por ti)
         val manual = detection.manualTripId?.let { id -> data(context).trips.firstOrNull { it.id == id } }
@@ -179,7 +224,9 @@ object TripHistoryManager {
             syncStatsToFirebase(context)
             return null
         }
-        if (detection.strong) {
+        // Fraca mas a continuar logo a viagem de metro anterior (começa onde ela acabou): é a mesma viagem
+        val last = data(context).trips.lastOrNull { it.mode == "metro" }
+        if (detection.strong || (last != null && TripRules.chain(last, trip) != null)) {
             addTrip(context, trip)
             return null
         }
@@ -215,8 +262,12 @@ object TripHistoryManager {
             fromId = apiId, fromName = com.example.metrotime.data.MetroLines.nameOf(apiId),
             lines = MetroNetwork.linesAt(apiId), startMs = now, source = "manual", direction = direction
         )
+        // Uma viagem de metro ainda em curso acaba onde apareceste por último (antes de esta começar)
+        val (ended, detection) = TripDetector.endRide(detectorState(context), metroStops)
+        detection?.let { record(context, it) }
+        saveDetectorState(context, ended)
         if (!addTrip(context, trip)) return null
-        saveDetectorState(context, TripDetector.startManual(detectorState(context), apiId, now, trip.id))
+        saveDetectorState(context, TripDetector.startManual(ended, apiId, now, trip.id))
         return trip
     }
 
@@ -224,7 +275,10 @@ object TripHistoryManager {
      * Comboio seguido pelo GPS do princípio ao fim: viagem com o percurso medido, o serviço (Alfa, IC,
      * Urbano…) e o número do comboio.
      */
-    fun trainTrip(context: Context, from: NearbyStation?, to: NearbyStation?, startMs: Long, endMs: Long, km: Double, service: String?, trainNumber: String?) {
+    fun trainTrip(
+        context: Context, from: NearbyStation?, to: NearbyStation?, startMs: Long, endMs: Long, km: Double, service: String?, trainNumber: String?,
+        topKmh: Double? = null, delayMin: Int? = null, strikeDay: Boolean = false
+    ) {
         val origin = from ?: to ?: return
         addTrip(
             context,
@@ -233,10 +287,16 @@ object TripHistoryManager {
                 fromId = origin.id, fromName = origin.name,
                 toId = to?.takeIf { from != null && it.id != from.id }?.id, toName = to?.takeIf { from != null && it.id != from.id }?.name,
                 lines = listOf(service ?: "CP"), startMs = startMs, endMs = endMs, km = km, source = "train",
-                service = service, trainNumber = trainNumber
+                service = service, trainNumber = trainNumber, topKmh = topKmh, delayMin = delayMin, strikeDay = strikeDay
             )
         )
     }
+
+    /** O estado do detetor de viagens de metro, para o ecrã de debug (admin). */
+    fun debugDetectorState(context: Context): TripDetector.State = synchronized(this) { detectorState(context) }
+
+    /** Debug (admin): esquece a origem e a viagem em curso do detetor de metro, como se nada tivesse acontecido. */
+    fun debugResetDetector(context: Context) = synchronized(this) { prefs(context).edit().remove(KEY_DETECTOR).apply() }
 
     private fun detectorState(context: Context): TripDetector.State = runCatching {
         val o = JSONObject(prefs(context).getString(KEY_DETECTOR, null) ?: return@runCatching TripDetector.State())
@@ -245,7 +305,13 @@ object TripHistoryManager {
             anchorLastMs = o.optLong("anchorLastMs"),
             lastGoodFixMs = o.optLong("lastGoodFixMs"),
             surfaceFixes = o.optInt("surfaceFixes"),
-            manualTripId = o.optString("manualTripId").ifEmpty { null }
+            manualTripId = o.optString("manualTripId").ifEmpty { null },
+            rideFromId = o.optString("rideFromId").ifEmpty { null },
+            rideStartMs = o.optLong("rideStartMs"),
+            rideLastId = o.optString("rideLastId").ifEmpty { null },
+            rideLastFirstMs = o.optLong("rideLastFirstMs"),
+            rideLastMs = o.optLong("rideLastMs"),
+            rideOutside = o.optInt("rideOutside")
         )
     }.getOrDefault(TripDetector.State())
 
@@ -256,6 +322,12 @@ object TripHistoryManager {
             .put("lastGoodFixMs", s.lastGoodFixMs)
             .put("surfaceFixes", s.surfaceFixes)
             .put("manualTripId", s.manualTripId ?: "")
+            .put("rideFromId", s.rideFromId ?: "")
+            .put("rideStartMs", s.rideStartMs)
+            .put("rideLastId", s.rideLastId ?: "")
+            .put("rideLastFirstMs", s.rideLastFirstMs)
+            .put("rideLastMs", s.rideLastMs)
+            .put("rideOutside", s.rideOutside)
         prefs(context).edit().putString(KEY_DETECTOR, o.toString()).apply()
     }
 
@@ -347,6 +419,10 @@ object TripHistoryManager {
         .put("direction", t.direction ?: JSONObject.NULL)
         .put("service", t.service ?: JSONObject.NULL)
         .put("trainNumber", t.trainNumber ?: JSONObject.NULL)
+        .put("topKmh", t.topKmh ?: JSONObject.NULL)
+        .put("delayMin", t.delayMin ?: JSONObject.NULL)
+        // "strike" e não "strikeDay": o antigo era da regra que dava greve sem greve nenhuma, e já não se lê
+        .put("strike", t.strikeDay)
 
     private fun parseTrip(o: JSONObject) = Trip(
         id = o.getString("id"), mode = o.getString("mode"),
@@ -359,7 +435,10 @@ object TripHistoryManager {
         km = o.optDouble("km", 0.0), source = o.optString("source", "auto"),
         direction = o.optString("direction").takeIf { !o.isNull("direction") && it.isNotEmpty() },
         service = o.optString("service").takeIf { !o.isNull("service") && it.isNotEmpty() },
-        trainNumber = o.optString("trainNumber").takeIf { !o.isNull("trainNumber") && it.isNotEmpty() }
+        trainNumber = o.optString("trainNumber").takeIf { !o.isNull("trainNumber") && it.isNotEmpty() },
+        topKmh = if (o.isNull("topKmh") || !o.has("topKmh")) null else o.optDouble("topKmh").takeIf { !it.isNaN() },
+        delayMin = if (o.isNull("delayMin") || !o.has("delayMin")) null else o.optInt("delayMin"),
+        strikeDay = o.optBoolean("strike", false)
     )
 
     private fun parse(json: String): Data {

@@ -55,38 +55,6 @@ fun inferTripStatus(trip: CpTripDetail, moments: List<CpTripClock.StopMoment>, n
     return VehicleStatus.IN_TRANSIT
 }
 
-/**
- * Posição do comboio em paragens (2.4 = 40 % entre a 3.ª e a 4.ª): junta a posição pelo relógio
- * (horas reais) com a última estação reportada pela CP. Devolve também se o GPS da CP está atrasado.
- */
-fun calculateTrainPosition(
-    stops: List<CpTrainStop>,
-    currentStopIndex: Int,
-    status: String?,
-    moments: List<CpTripClock.StopMoment>,
-    now: java.time.LocalDateTime
-): Pair<Float, Boolean> {
-    if (stops.isEmpty() || status == VehicleStatus.NOT_STARTED) return -1f to false
-
-    val timePos = CpTripClock.progress(moments, now)
-
-    var apiPos = -1f
-    if (currentStopIndex in stops.indices) {
-        apiPos = when {
-            status == VehicleStatus.AT_STATION || status == VehicleStatus.AT_ORIGIN || status == VehicleStatus.COMPLETED -> currentStopIndex.toFloat()
-            currentStopIndex == stops.lastIndex -> currentStopIndex.toFloat()
-            else -> currentStopIndex + 0.1f // IN_TRANSIT
-        }
-    }
-
-    if (apiPos < 0f) return timePos to false
-    if (timePos < 0f) return apiPos to false
-    // A CP diz que já vai mais à frente do que o relógio: confia na CP
-    if (apiPos > timePos) return apiPos to false
-    // O relógio vai à frente: o GPS da CP está atrasado se já devia estar a meio do troço seguinte
-    return timePos to (timePos >= currentStopIndex + 0.5f)
-}
-
 class CpTripDetailActivity : ComponentActivity() {
 
     companion object {
@@ -292,23 +260,11 @@ fun CpTripDetailScreen(
                     )
                 }
 
-                val lastStationCode = t.lastStationCode
                 val inferredStatus = inferTripStatus(t, moments, now)
-
-                // Find the index of the current/last station
-                val currentStopIndex = stops.indexOfLast { stop ->
-                    stop.station?.code == lastStationCode
-                }
-
-                val (trainPosition, isApiLagging) = calculateTrainPosition(stops, currentStopIndex, inferredStatus, moments, now)
-
-                // Paragens já passadas: pela posição no relógio quando o GPS da CP está atrasado
-                val timeBasedIdx = if (trainPosition >= 0f) trainPosition.toInt() else -1
-                val effectiveCurrentIdx = when {
-                    timeBasedIdx >= 0 && (currentStopIndex < 0 || timeBasedIdx > currentStopIndex) -> timeBasedIdx
-                    currentStopIndex >= 0 -> currentStopIndex
-                    else -> timeBasedIdx
-                }
+                // A mesma conta do mapa, do painel e dos avisos (CpTrainNow): a última estação da CP e as horas
+                val trainNow = remember(t, moments, now) { CpTrainNow.of(stops, moments, t.lastStationCode, inferredStatus, null, now) }
+                val trainPosition = trainNow.position
+                val effectiveCurrentIdx = trainNow.stopIndex
                 val fromIdx = fromCode?.let { c -> stops.indexOfFirst { it.station?.code == c } } ?: -1
                 val toIdx = toCode?.let { c -> stops.indexOfLast { it.station?.code == c } } ?: -1
                 val stationIdx = stationCode?.let { c ->
@@ -340,41 +296,15 @@ fun CpTripDetailScreen(
                 ) {
                     // Header card
                     item(key = "header") {
-                        TripHeaderCard(t, trainNumber, inferredStatus)
-                        Spacer(modifier = Modifier.height(16.dp))
-                    }
-
-                    if (isApiLagging) {
-                        item(key = "api_lag_warning") {
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(bottom = 16.dp),
-                                colors = CardDefaults.cardColors(containerColor = Color(0xFF4A3500))
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text("📡", fontSize = 20.sp)
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Column {
-                                        Text(
-                                            "A aguardar GPS da CP",
-                                            color = Color(0xFFF59E0B),
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 14.sp
-                                        )
-                                        Text(
-                                            "Localização estimada pelo tempo previsto. O radar da CP tem atraso e ainda não atualizou a última estação.",
-                                            color = Color(0xFFD4A44A),
-                                            fontSize = 12.sp,
-                                            lineHeight = 16.sp
-                                        )
-                                    }
-                                }
-                            }
+                        TripHeaderCard(t, trainNumber, inferredStatus, trainNow.delayMinutes, cancelled = trainNow.cancelled)
+                        if (t.offline) {
+                            Text(
+                                "⚠ A CP não responde: paragens da alternativa e atrasos pelo GPS do comboio.",
+                                color = Color(0xFFFFB74D), fontSize = 12.sp, lineHeight = 16.sp,
+                                modifier = Modifier.padding(top = 10.dp, start = 4.dp)
+                            )
                         }
+                        Spacer(modifier = Modifier.height(16.dp))
                     }
 
                     itemsIndexed(stops, key = { idx, stop -> "${idx}_${stop.station?.code}" }) { index, stop ->
@@ -382,7 +312,12 @@ fun CpTripDetailScreen(
                         val isCurrent = index == effectiveCurrentIdx
                         val isFirst = index == 0
                         val isLast = index == stops.lastIndex
-                        val role = when (index) {
+                        val plannedAt = moments.getOrNull(index)?.departureOrArrival?.format(TRIP_HM)
+                        val role = when {
+                            trainNow.cancelled && (index == fromIdx || index == toIdx || index == stationIdx) ->
+                                plannedAt?.let { "Suprimido · estava previsto às $it" } ?: "Suprimido"
+                            else -> null
+                        } ?: when (index) {
                             fromIdx -> moments.getOrNull(index)?.departureOrArrival?.let { "Entras aqui · parte às ${it.format(TRIP_HM)}" } ?: "Entras aqui"
                             toIdx -> moments.getOrNull(index)?.arrivalOrDeparture?.let { "Sais aqui · chega às ${it.format(TRIP_HM)}" } ?: "Sais aqui"
                             // Vieste do quadro desta estação: diz só quando o comboio lá passa
@@ -403,8 +338,14 @@ fun CpTripDetailScreen(
                             serviceColor = getServiceColor(t.effectiveService?.code),
                             index = index,
                             trainPosition = trainPosition,
+                            moment = moments.getOrNull(index),
                             role = role,
-                            roleColor = if (index == fromIdx || index == toIdx) Color(0xFF4ADE80) else Color(0xFF60A5FA)
+                            roleColor = when {
+                                trainNow.cancelled -> Color(0xFFFF5252)
+                                index == fromIdx || index == toIdx -> Color(0xFF4ADE80)
+                                else -> Color(0xFF60A5FA)
+                            },
+                            cancelled = trainNow.cancelled
                         )
                     }
                 }
@@ -463,10 +404,17 @@ private fun shareText(
 }
 
 @Composable
-fun TripHeaderCard(trip: CpTripDetail, knownTrainNumber: Int, inferredStatus: String = trip.status ?: VehicleStatus.NOT_STARTED) {
+fun TripHeaderCard(
+    trip: CpTripDetail,
+    knownTrainNumber: Int,
+    inferredStatus: String = trip.status ?: VehicleStatus.NOT_STARTED,
+    /** O atraso de [CpTrainNow] (o mesmo do mapa); sem ele, o da CP (em minutos). */
+    delayMinutes: Int? = null,
+    /** Suprimido ([CpTrainNow.cancelled]): sem atraso nem "Na hora". */
+    cancelled: Boolean = false
+) {
     val serviceColor = getServiceColor(trip.effectiveService?.code)
-    // Trips API: delay is already in MINUTES (not seconds!)
-    val delayMin = trip.delay ?: 0
+    val delayMin = delayMinutes ?: trip.delay ?: 0
     val delayColor = when {
         delayMin <= 0 -> Color(0xFF4CAF50)
         delayMin in 1..5 -> Color(0xFFFFC107)
@@ -536,6 +484,7 @@ fun TripHeaderCard(trip: CpTripDetail, knownTrainNumber: Int, inferredStatus: St
 
                     val isNotStarted = inferredStatus == VehicleStatus.NOT_STARTED
                     val (chipText, chipColor) = when {
+                        cancelled -> "Suprimido" to Color(0xFFFF5252)
                         isNotStarted && delayMin <= 0 -> "Agendado" to Color.Gray
                         delayMin <= 0 -> "Na hora" to Color(0xFF4CAF50)
                         else -> "+${delayMin} min atraso" to delayColor
@@ -557,7 +506,8 @@ fun TripHeaderCard(trip: CpTripDetail, knownTrainNumber: Int, inferredStatus: St
                 }
 
                 // Status
-                val statusText = when (inferredStatus) {
+                val partlySuppressed = !cancelled && stops.any { it.supression != null }
+                val statusText = if (cancelled) "Não se realiza hoje" else if (partlySuppressed) "Parte do percurso suprimido" else when (inferredStatus) {
                     VehicleStatus.IN_TRANSIT -> "Em trânsito"
                     VehicleStatus.AT_STATION -> "Na estação"
                     VehicleStatus.AT_ORIGIN -> "Na origem"
@@ -588,8 +538,12 @@ fun TimelineStopRow(
     serviceColor: Color,
     index: Int,
     trainPosition: Float,
+    /** As horas desta paragem (as mesmas do mapa: reais, ou previstas com o atraso conhecido). */
+    moment: CpTripClock.StopMoment? = null,
     role: String? = null,
-    roleColor: Color = Color(0xFF4ADE80)
+    roleColor: Color = Color(0xFF4ADE80),
+    /** O comboio inteiro está suprimido: todas as paragens riscadas, sem atrasos. */
+    cancelled: Boolean = false
 ) {
     // Past and current stations use service color. Future uses gray.
     val dotColor = when {
@@ -606,10 +560,14 @@ fun TimelineStopRow(
         else -> Color.LightGray
     }
 
-    // Trips API: stop delay is already in MINUTES
-    val stopDelay = stop.delay ?: 0
-    val hasDelay = stopDelay > 0
-    val isSuppressed = stop.supression != null
+    // Atraso desta paragem pelas mesmas horas que se mostram (partida; no fim, chegada); sem elas, o da CP
+    val stopDelay = moment?.let { m ->
+        val dep = if (m.departure != null && m.scheduledDeparture != null) java.time.Duration.between(m.scheduledDeparture, m.departure).toMinutes() else null
+        val arr = if (m.arrival != null && m.scheduledArrival != null) java.time.Duration.between(m.scheduledArrival, m.arrival).toMinutes() else null
+        (dep ?: arr)?.toInt()
+    } ?: stop.delay ?: 0
+    val hasDelay = stopDelay > 0 && !cancelled
+    val isSuppressed = stop.supression != null || cancelled
 
     val isTrainAtStation = trainPosition == index.toFloat()
     val isTrainOnTopLine = trainPosition > (index - 1f) && trainPosition < index && trainPosition > (index - 0.5f)
@@ -754,13 +712,12 @@ fun TimelineStopRow(
                 // Real time (ETA/ETD) if delayed
                 if (hasDelay) {
                     Spacer(modifier = Modifier.width(8.dp))
-                    val realText = buildString {
-                        if (stop.eta != null) append(stop.eta)
-                        if (stop.etd != null) {
-                            if (isNotEmpty()) append(" / ")
-                            append(stop.etd)
-                        }
-                    }
+                    // A chegada e a partida esperadas (com "~" quando a CP ainda não deu hora para esta paragem)
+                    val realText = moment?.let { m ->
+                        listOfNotNull(m.arrival.takeIf { stop.arrival != null }, m.departure.takeIf { stop.departure != null })
+                            .joinToString(" / ") { it.format(TRIP_HM) }
+                            .let { if (m.estimated && it.isNotEmpty()) "~$it" else it }
+                    } ?: listOfNotNull(stop.eta, stop.etd).joinToString(" / ")
                     if (realText.isNotEmpty()) {
                         Text(
                             text = realText,
@@ -789,7 +746,7 @@ fun TimelineStopRow(
             }
 
             // Suppression info
-            if (isSuppressed) {
+            if (stop.supression != null) {
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = "⚠ Suprimido: ${stop.supression?.designation ?: ""}",

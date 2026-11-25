@@ -45,6 +45,42 @@ class TripRulesTest {
     }
 
     @Test
+    fun piecesOfTheSameTrainAreOneTrip() {
+        // O IC 621 de hoje: a app perdia o comboio nas paragens e gravava-o aos bocados
+        fun ic(id: String, from: String, to: String, start: Long, end: Long, km: Double, number: String = "621") =
+            Trip(id, "cp", from, from, to, to, listOf("IC"), t0 + start * min, t0 + end * min, km, "train", service = "IC", trainNumber = number)
+        val a = ic("c1", "Riachos", "Albergaria", 0, 23, 40.0)
+        val b = ic("c2", "Pombal", "Pelariga", 36, 41, 5.6)
+        val c = ic("c3", "Coimbra-B", "Aveiro", 70, 105, 55.0)
+
+        val ab = TripRules.chain(a, b)!!
+        assertEquals("c1", ab.id)
+        assertEquals("Riachos" to "Pelariga", ab.fromId to ab.toId)
+        assertEquals(t0 to t0 + 41 * min, ab.startMs to ab.endMs)
+        assertEquals(45.6, ab.km, 0.01)
+        // Com o traçado, os km são os da viagem toda (os troços não contam o que ficou de fora)
+        assertEquals(150.0, TripRules.chain(a, b) { 150.0 }!!.km, 0.01)
+
+        // Os já guardados juntam-se numa viagem só
+        val merged = TripRules.mergeTrainLegs(listOf(c, a, b))
+        assertEquals(1, merged.size)
+        assertEquals("Riachos" to "Aveiro", merged[0].fromId to merged[0].toId)
+        assertEquals(t0 + 105 * min, merged[0].endMs)
+
+        // O mesmo número escrito de outra maneira (espaços, zeros à esquerda) é o mesmo comboio
+        assertEquals("Riachos" to "Pelariga", TripRules.chain(a, b.copy(trainNumber = " 0621 "))!!.let { it.fromId to it.toId })
+
+        // Outro comboio, muito tempo depois, ou com outra viagem pelo meio: viagens diferentes
+        assertNull(TripRules.chain(a, b.copy(trainNumber = "523")))
+        assertNull(TripRules.chain(a, b.copy(startMs = t0 + 90 * min, endMs = t0 + 100 * min)))
+        val metro = TripRules.metroTrip("m", "AM", "BC", t0 + 25 * min, t0 + 30 * min, "auto")
+        assertEquals(3, TripRules.mergeTrainLegs(listOf(a, metro, b)).size)
+        // Nada a juntar: a mesma lista
+        val alone = listOf(a, metro)
+        assertTrue(TripRules.mergeTrainLegs(alone) === alone)
+    }
+
+    @Test
     fun manualStartIsClosedByTheDetectedEnd() {
         val open = Trip("h", "metro", "AM", "Alameda", lines = listOf("Verde", "Vermelha"), startMs = t0, source = "manual", direction = "Cais do Sodré")
         val detected = TripRules.metroTrip("m", "AM", "BC", t0 + min, t0 + 12 * min, "auto")

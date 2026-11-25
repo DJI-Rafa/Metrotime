@@ -13,6 +13,8 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Aviso "hora de sair" do planeador à hora certa (o utilizador pode negar; aí o aviso pode atrasar uns minutos) -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
@@ -117,6 +119,30 @@
             android:theme="@style/Theme.Metrotime.App"
             android:parentActivityName=".ui.SettingsActivity" />
 
+        <activity
+            android:name=".ui.WalkRouteActivity"
+            android:theme="@style/Theme.Metrotime.App"
+            android:parentActivityName=".ui.TripPlannerActivity" />
+
+        <activity
+            android:name=".ui.TripPlannerActivity"
+            android:theme="@style/Theme.Metrotime.App"
+            android:windowSoftInputMode="adjustResize"
+            android:parentActivityName=".ui.SettingsActivity" />
+
+        <activity
+            android:name=".ui.intro.IntroActivity"
+            android:theme="@style/Theme.Metrotime.App"
+            android:screenOrientation="portrait" />
+        <activity
+            android:name=".ui.NearbyActivity"
+            android:theme="@style/Theme.Metrotime.App"
+            android:parentActivityName=".ui.SettingsActivity" />
+
+        <receiver
+            android:name=".work.TravelAlertReceiver"
+            android:exported="false" />
+
         <receiver
             android:name=".work.BootReceiver"
             android:exported="true">
@@ -146,6 +172,16 @@
             android:name=".ui.StatsActivity"
             android:theme="@style/Theme.Metrotime.App"
             android:parentActivityName=".ui.SettingsActivity" />
+
+        <!-- Debug (só admin, a partir da área de administrador) -->
+        <activity
+            android:name=".ui.DebugActivity"
+            android:theme="@style/Theme.Metrotime.App"
+            android:parentActivityName=".ui.SettingsActivity" />
+
+        <activity
+            android:name=".ui.caderneta.CadernetaActivity"
+            android:theme="@style/Theme.Metrotime.App" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

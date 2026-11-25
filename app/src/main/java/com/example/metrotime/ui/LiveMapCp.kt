@@ -23,21 +23,29 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.metrotime.data.cp.CpLive
+import com.example.metrotime.data.cp.CpLiveTrain
 import com.example.metrotime.data.cp.CpNetwork
+import com.example.metrotime.data.cp.CpRouteGeometry
+import com.example.metrotime.data.cp.CpSmoother
 import com.example.metrotime.data.cp.CpService
 import com.example.metrotime.data.cp.CpTime
 import com.example.metrotime.data.cp.CpTone
 import com.example.metrotime.data.cp.CpTrack
+import com.example.metrotime.data.cp.CpTrainNow
 import com.example.metrotime.data.cp.CpTrainStop
 import com.example.metrotime.data.cp.CpTripClock
 import com.example.metrotime.data.cp.VehicleStatus
@@ -80,7 +88,17 @@ data class CpMapTrain(
     val origin: String?,
     val destination: String?,
     val lastStationCode: String?,
-    val runDate: String?
+    val runDate: String?,
+    /** O GPS tal como veio (lat/lon acima podem estar na estação ou agarrados ao carril) e a hora dele (ms). */
+    val gpsLat: Double = lat,
+    val gpsLon: Double = lon,
+    val gpsAt: Long? = null,
+    /** A hora dos dados (ms): a da Cloud Function, ou a da leitura direta. */
+    val dataAt: Long = 0L,
+    /** A última passagem registada pela CP: estação, hora "HH:mm:ss" e se já saiu de lá. */
+    val passCode: String? = null,
+    val passTime: String? = null,
+    val passLeft: Boolean? = null
 ) {
     val tone: CpTone get() = CpTone.ofSeconds(delaySeconds, hasRealtime = status != VehicleStatus.NOT_STARTED)
     val moving: Boolean get() = bearing != null && status != VehicleStatus.AT_STATION && status != VehicleStatus.AT_ORIGIN
@@ -100,21 +118,29 @@ fun CpTone.color(): Color = when (this) {
     CpTone.IDLE -> Color(0xFF6F7C76)
 }
 
-fun cpDelayText(delaySeconds: Int?, status: String?): String = when {
-    status == VehicleStatus.NOT_STARTED && (delaySeconds ?: 0) <= 0 -> "Programado"
-    delaySeconds == null -> "Sem dados"
-    delaySeconds < 90 -> "A horas"
-    else -> "+${Math.round(delaySeconds / 60.0)} min"
-}
-
 private val HM = DateTimeFormatter.ofPattern("HH:mm")
 
 // ── Camadas ──────────────────────────────────────────────────────────────────
 
 private val CP_LAYERS = listOf(
     "cp-network", "cp-stations", "cp-route-ahead", "cp-route-done", "cp-route-stops",
-    "cp-route-names", "cp-train-heading", "cp-trains"
+    "cp-route-names", "cp-train-heading", "cp-trains", "cp-train-dots"
 )
+
+/** Abaixo deste zoom os comboios são pontos (verde a horas, vermelho com 5 min ou mais) em vez das etiquetas. */
+const val CP_DOT_MAX_ZOOM = 9f
+/** A partir de quanto atraso o ponto fica vermelho. */
+private const val CP_DOT_LATE_S = 5 * 60
+private const val CP_DOT_GREEN = "#4ADE80"
+private const val CP_DOT_RED = "#FF5252"
+private const val CP_DOT_IDLE = "#8E9893"
+
+/** Cor do ponto de um comboio visto de longe: verde até 5 min de atraso, vermelho daí para cima. */
+internal fun cpDotColor(delaySeconds: Int?, started: Boolean): String = when {
+    !started || delaySeconds == null -> CP_DOT_IDLE
+    delaySeconds >= CP_DOT_LATE_S -> CP_DOT_RED
+    else -> CP_DOT_GREEN
+}
 
 /** Rede e estações, por baixo das linhas do metro. */
 fun setupCpBaseLayers(style: Style) {
@@ -180,6 +206,21 @@ fun setupCpTopLayers(context: Context, style: Style) {
     )
 
     style.addSource(GeoJsonSource("cp-trains-src", empty))
+    // De longe: um ponto por comboio, verde a horas e vermelho com 5 min ou mais de atraso (o aberto, maior)
+    style.addLayer(
+        CircleLayer("cp-train-dots", "cp-trains-src").withProperties(
+            circleColor(Expression.toColor(Expression.get("dot"))),
+            circleRadius(
+                Expression.interpolate(
+                    Expression.linear(), Expression.zoom(),
+                    Expression.stop(5f, Expression.switchCase(Expression.eq(Expression.get("z"), 2), Expression.literal(6f), Expression.literal(3.5f))),
+                    Expression.stop(CP_DOT_MAX_ZOOM, Expression.switchCase(Expression.eq(Expression.get("z"), 2), Expression.literal(8f), Expression.literal(5.5f)))
+                )
+            ),
+            circleStrokeColor("#0E0E0E"),
+            circleStrokeWidth(1.5f)
+        ).also { it.maxZoom = CP_DOT_MAX_ZOOM }
+    )
     // Seta de direção: um triângulo a espreitar da etiqueta para onde o comboio vai
     style.addLayer(
         SymbolLayer("cp-train-heading", "cp-trains-src").withFilter(Expression.eq(Expression.get("moving"), true)).withProperties(
@@ -189,7 +230,7 @@ fun setupCpTopLayers(context: Context, style: Style) {
             iconAllowOverlap(true),
             iconIgnorePlacement(true),
             symbolSortKey(Expression.get("z"))
-        )
+        ).also { it.minZoom = CP_DOT_MAX_ZOOM }
     )
     style.addLayer(
         SymbolLayer("cp-trains", "cp-trains-src").withProperties(
@@ -197,21 +238,24 @@ fun setupCpTopLayers(context: Context, style: Style) {
             iconAllowOverlap(true),
             iconIgnorePlacement(true),
             symbolSortKey(Expression.get("z"))
-        )
+        ).also { it.minZoom = CP_DOT_MAX_ZOOM }
     )
 }
 
-/** Desenha a rede (troços e estações) — pesado, por isso a Activity chama isto fora da thread principal. */
-fun buildCpNetwork(context: Context): Pair<Feature, FeatureCollection> {
+/**
+ * Desenha a rede (troços e estações) — pesado, por isso a Activity chama isto fora da thread principal, e devolve já
+ * o texto GeoJSON (passar os objetos ao mapa convertia-os na thread principal: ~1 s ao abrir o mapa).
+ */
+fun buildCpNetwork(context: Context): Pair<String, String> {
     val lines = CpNetwork.networkLines(context).map { line -> line.map { Point.fromLngLat(it.second, it.first) } }
     val network = Feature.fromGeometry(MultiLineString.fromLngLats(lines))
     val stations = FeatureCollection.fromFeatures(CpNetwork.stations(context).map { s ->
         Feature.fromGeometry(Point.fromLngLat(s.lon, s.lat)).apply { addStringProperty("name", s.name) }
     })
-    return network to stations
+    return network.toJson() to stations.toJson()
 }
 
-fun applyCpNetwork(map: MapLibreMap, network: Pair<Feature, FeatureCollection>) {
+fun applyCpNetwork(map: MapLibreMap, network: Pair<String, String>) {
     val style = map.style ?: return
     style.getSourceAs<GeoJsonSource>("cp-network-src")?.setGeoJson(network.first)
     style.getSourceAs<GeoJsonSource>("cp-stations-src")?.setGeoJson(network.second)
@@ -226,10 +270,13 @@ fun applyMapFilters(map: MapLibreMap, f: Prefs.MapFilters) {
     style.layers.forEach { layer ->
         val id = layer.id
         when {
-            id.startsWith("line-layer-") || id == "stations-layer" || id.startsWith("trains-layer-") -> show(layer, f.metro)
+            id.startsWith("line-layer-") || id == "stations-layer" -> show(layer, f.metro)
+            id == PORTO_LINES_LAYER || id == PORTO_STATIONS_LAYER -> show(layer, portoMetroShown(f))
+            // Os metros das duas cidades partilham as camadas (cada linha filtra-se ao desenhar)
+            id.startsWith("metro-") -> show(layer, f.metro || portoMetroShown(f))
             id in CP_LAYERS -> show(layer, f.cp)
             id == "friends-layer" -> show(layer, f.friends)
-            id == "all-stops-layer" || id == "all-stops-labels" -> show(layer, f.busStops)
+            id.startsWith("regional-") -> show(layer, f.regional)
         }
     }
 }
@@ -286,27 +333,165 @@ private fun arrowBitmap(context: Context, tone: CpTone, selected: Boolean): Bitm
     return bmp
 }
 
-/** Atualiza os comboios no mapa (etiqueta com o tipo de serviço, cor do atraso e seta de direção). */
+/** As imagens das etiquetas já postas em cada estilo do mapa (perguntar ao mapa a cada imagem do ecrã sai caro). */
+private val cpImagesAdded = java.util.WeakHashMap<Style, MutableSet<String>>()
+
+private fun ensureCpImage(style: Style, name: String, make: () -> android.graphics.Bitmap) {
+    val added = cpImagesAdded.getOrPut(style) { HashSet() }
+    if (name in added) return
+    if (style.getImage(name) == null) style.addImage(name, make())
+    added += name
+}
+
+/** Um comboio no mapa: etiqueta com o tipo de serviço na cor do atraso e a seta de direção. */
+internal fun cpFeature(
+    context: Context, style: Style, number: Int, service: String, tone: CpTone,
+    lat: Double, lon: Double, bearing: Double?, moving: Boolean, isSelected: Boolean,
+    /** Cor do ponto de longe ([cpDotColor]). */
+    dot: String = CP_DOT_IDLE,
+    /** Comboios que não são da CP (Fertagus): a chave do veículo, para abrir o painel certo. */
+    key: String? = null
+): Feature {
+    val icon = "cp-pill-$service-${tone.name}-$isSelected"
+    ensureCpImage(style, icon) { pillBitmap(context, service, tone, isSelected) }
+    val arrow = "cp-arrow-${tone.name}-$isSelected"
+    ensureCpImage(style, arrow) { arrowBitmap(context, tone, isSelected) }
+    return Feature.fromGeometry(Point.fromLngLat(lon, lat)).apply {
+        addStringProperty("number", number.toString())
+        key?.let { addStringProperty("key", it) }
+        addStringProperty("icon", icon)
+        addStringProperty("arrow", arrow)
+        addStringProperty("dot", dot)
+        addNumberProperty("bearing", bearing ?: 0.0)
+        addBooleanProperty("moving", moving && bearing != null)
+        addNumberProperty("z", if (isSelected) 2 else 1)
+    }
+}
+
+/**
+ * Um comboio que não é da CP (a Fertagus, do GO Hub da TML) desenhado como os da CP: etiqueta "FT" na cor do atraso
+ * e, de longe, o ponto verde ou vermelho. Abre pelo [key] (o painel das outras redes, com as paragens do horário).
+ */
+data class ExtraTrain(
+    val key: String,
+    val label: String,
+    val lat: Double,
+    val lon: Double,
+    val delaySeconds: Int?,
+    val selected: Boolean
+) {
+    fun feature(context: Context, style: Style): Feature {
+        val known = delaySeconds != null
+        val tone = if (known) CpTone.ofSeconds(delaySeconds, hasRealtime = true) else CpTone.ON_TIME
+        return cpFeature(
+            context, style, 0, label, tone, lat, lon, null, false, selected,
+            dot = if (known) cpDotColor(delaySeconds, true) else CP_DOT_GREEN, key = key
+        )
+    }
+}
+
+/** Atualiza os comboios no mapa de uma vez, onde os dados os põem (a primeira imagem, antes de o desenhador arrancar). */
 fun updateCpTrains(context: Context, map: MapLibreMap, trains: List<CpMapTrain>, selected: Int?) {
     val style = map.style ?: return
     val source = style.getSourceAs<GeoJsonSource>("cp-trains-src") ?: return
     val features = trains.map { t ->
-        val isSelected = t.number == selected
-        val tone = t.tone
-        val icon = "cp-pill-${t.service}-${tone.name}-$isSelected"
-        if (style.getImage(icon) == null) style.addImage(icon, pillBitmap(context, t.service, tone, isSelected))
-        val arrow = "cp-arrow-${tone.name}-$isSelected"
-        if (style.getImage(arrow) == null) style.addImage(arrow, arrowBitmap(context, tone, isSelected))
-        Feature.fromGeometry(Point.fromLngLat(t.lon, t.lat)).apply {
-            addStringProperty("number", t.number.toString())
-            addStringProperty("icon", icon)
-            addStringProperty("arrow", arrow)
-            addNumberProperty("bearing", t.bearing ?: 0.0)
-            addBooleanProperty("moving", t.moving)
-            addNumberProperty("z", if (isSelected) 2 else 1)
-        }
+        cpFeature(
+            context, style, t.number, t.service, t.tone, t.lat, t.lon, t.bearing, t.moving, t.number == selected,
+            dot = cpDotColor(t.delaySeconds, t.status != VehicleStatus.NOT_STARTED)
+        )
     }
     source.setGeoJson(FeatureCollection.fromFeatures(features))
+}
+
+/**
+ * Desenha os comboios CP a cada imagem. Os que têm percurso ([CpLiveTrain]) andam pelo traçado com a mesma conta do
+ * painel: entre atualizações continuam a andar ao ritmo do horário, a partir do último sítio conhecido, e nunca para
+ * trás nem aos saltos ([CpSmoother]). Os outros ficam no GPS, agarrado ao carril.
+ */
+class CpTrainsRenderer {
+    private val smoother = CpSmoother()
+    private val lastModel = HashMap<Int, CpLiveTrain>()
+    private var drewEmpty = false
+    /** O último desenho (posições arredondadas e etiquetas): igual, não se envia outra vez. */
+    private var lastSignature = 0L
+
+    fun render(
+        context: Context, map: MapLibreMap, trains: List<CpMapTrain>, live: Map<Int, CpLiveTrain>,
+        selected: Int?, nowMs: Long, dtSec: Double,
+        /** Comboios de outros operadores (Fertagus) com a mesma etiqueta. */
+        extra: List<ExtraTrain> = emptyList()
+    ) {
+        val style = map.style ?: return
+        val source = style.getSourceAs<GeoJsonSource>("cp-trains-src") ?: return
+        if (trains.isEmpty() && extra.isEmpty()) {
+            if (!drewEmpty) source.setGeoJson(FeatureCollection.fromFeatures(emptyList()))
+            drewEmpty = true
+            smoother.retain(emptySet())
+            lastModel.clear()
+            return
+        }
+        drewEmpty = false
+        val now = CpLive.lisbon(nowMs)
+        val features = ArrayList<Feature>(trains.size)
+        // Só os que estão à vista (com margem): de perto são poucos dos ~200 que andam no país
+        val box = map.projection.visibleRegion.latLngBounds.let { b ->
+            val dLat = (b.latitudeNorth - b.latitudeSouth) * 0.6
+            val dLon = (b.longitudeEast - b.longitudeWest) * 0.6
+            org.maplibre.android.geometry.LatLngBounds.from(b.latitudeNorth + dLat, b.longitudeEast + dLon, b.latitudeSouth - dLat, b.longitudeWest - dLon)
+        }
+        var signature = 17L
+        fun sign(number: Int, lat: Double, lon: Double, extra: Int) {
+            signature = signature * 31 + number
+            signature = signature * 31 + Math.round(lat * 20_000)
+            signature = signature * 31 + Math.round(lon * 20_000)
+            signature = signature * 31 + extra
+        }
+        for (t in trains) {
+            if (t.number != selected && !box.contains(org.maplibre.android.geometry.LatLng(t.lat, t.lon))) continue
+            var lat = t.lat
+            var lon = t.lon
+            var bearing = t.bearing
+            var moving = t.moving
+            var tone = t.tone
+            var dot = cpDotColor(t.delaySeconds, t.status != VehicleStatus.NOT_STARTED)
+            val model = live[t.number]
+            val n = model?.now(now)
+            val s = if (model != null && n != null) model.metersOf(n) else null
+            if (model != null && n != null && s != null) {
+                val newData = lastModel[t.number] !== model
+                lastModel[t.number] = model
+                val shown = smoother.step(t.number, s, dtSec, newData)
+                val track = model.geometry.track
+                val p = track.pointAt(shown)
+                lat = p.first
+                lon = p.second
+                val still = n.atStation || n.finished
+                bearing = if (still) null else track.bearingAt(shown)
+                moving = !still
+                // A cor do atraso: a do painel (o do próximo acontecimento)
+                tone = CpTone.ofSeconds(n.delayMinutes?.times(60) ?: t.delaySeconds, hasRealtime = n.started)
+                dot = cpDotColor(n.delayMinutes?.times(60) ?: t.delaySeconds, n.started)
+            } else {
+                smoother.forget(t.number)
+                lastModel.remove(t.number)
+            }
+            features += cpFeature(context, style, t.number, t.service, tone, lat, lon, bearing, moving, t.number == selected, dot = dot)
+            sign(t.number, lat, lon, (tone.ordinal * 7 + dot.hashCode()) * 31 + (bearing?.toInt() ?: -1) + (if (t.number == selected) 1_000 else 0))
+        }
+        // Fertagus: mesma etiqueta e o mesmo ponto, com "FT"
+        for (f in extra) {
+            if (!f.selected && !box.contains(org.maplibre.android.geometry.LatLng(f.lat, f.lon))) continue
+            features += f.feature(context, style)
+            sign(f.key.hashCode(), f.lat, f.lon, (f.delaySeconds ?: -1) + if (f.selected) 1_000_000 else 0)
+        }
+        val keys = trains.mapTo(HashSet()) { it.number }
+        smoother.retain(keys)
+        lastModel.keys.retainAll(keys)
+        signature = signature * 31 + features.size
+        if (signature == lastSignature) return
+        lastSignature = signature
+        source.setGeoJson(FeatureCollection.fromFeatures(features))
+    }
 }
 
 // ── Percurso do comboio aberto ───────────────────────────────────────────────
@@ -321,46 +506,70 @@ private fun stopPoint(context: Context, stop: CpTrainStop): Pair<Double, Double>
 }
 
 /**
- * Percurso do comboio aberto: o traçado real (GTFS, como no CP Bot) ou, sem ele, linhas retas entre
- * as paragens, e onde cada paragem cai nesse traçado. Calculado fora da thread principal.
+ * Percurso de um comboio: o traçado real (GTFS, como no CP Bot) ou, sem ele, linhas retas entre as paragens, e onde
+ * cada paragem cai nesse traçado. Calculado fora da thread principal.
  */
-class CpRouteGeometry(val track: CpTrack, val stopAt: List<Double?>)
-
 fun cpRouteGeometry(context: Context, number: Int, stops: List<CpTrainStop>): CpRouteGeometry? {
     val points = stops.map { stopPoint(context, it) }
     val track = runCatching { CpNetwork.trackForTrain(context, number) }.getOrNull()
-        ?: points.filterNotNull().takeIf { it.size >= 2 }?.let { CpTrack(it) }
-        ?: return null
-    val stopAt = track.stopPositions(points)
-    return if (stopAt.count { it != null } >= 2) CpRouteGeometry(track, stopAt) else null
+    return CpRouteGeometry.of(track, points)
 }
 
+/** Coordenadas de uma estação pela rede GTFS (já carregada). */
+fun cpStationPoint(code: String): Pair<Double, Double>? = CpNetwork.stationsByCode[code]?.let { it.lat to it.lon }
+
 /**
- * Onde vai o comboio, em paragens (3.4 = 40 % entre a 4.ª e a 5.ª; -1 = ainda não saiu).
- * Com GPS, onde o mapa o mostra (projetado no percurso) — antes o painel ia só pelo relógio e podia
- * dar o comboio já depois de uma estação quando no mapa ainda nem lá tinha chegado. Sem GPS, pelo
- * relógio (horas reais), sem nunca ficar atrás da última estação que a CP diz que já passou.
+ * O comboio aberto com o percurso da CP (as horas reais e as previstas de cada paragem) e o que vem com ele no mapa
+ * (GPS com a hora, última passagem). O painel e o mapa usam este mesmo comboio: dizem sempre o mesmo.
  */
-fun cpProgress(state: LiveMapViewModel.CpTripState?, train: CpMapTrain?, now: LocalDateTime = CpTime.now()): Float {
-    val trip = state?.trip ?: return -1f
+fun cpLiveOf(state: LiveMapViewModel.CpTripState?, train: CpMapTrain?): CpLiveTrain? {
+    val trip = state?.trip ?: return null
     val stops = trip.trainStops.orEmpty()
-    val runDate = state.runDate ?: return -1f
-    if (stops.isEmpty()) return -1f
-    val timePos = CpTripClock.progress(CpTripClock.moments(runDate, stops), now)
-    val last = trip.lastStationCode ?: train?.lastStationCode
-    val apiIdx = if (last != null) stops.indexOfLast { it.station?.code == last } else -1
-    val status = train?.status ?: trip.status
-    val geometry = state.geometry
-    val gpsPos = if (train != null && geometry != null) geometry.track.progressOf(geometry.stopAt, train.lat to train.lon) else null
-    return when {
-        status == VehicleStatus.AT_STATION && apiIdx >= 0 -> apiIdx.toFloat()
-        status == VehicleStatus.AT_ORIGIN -> 0f
-        status == VehicleStatus.NOT_STARTED && timePos < 0 -> -1f
-        gpsPos != null -> gpsPos
-        apiIdx >= 0 && apiIdx > timePos -> apiIdx.toFloat()
-        else -> timePos
-    }
+    val runDate = state.runDate ?: return null
+    val geometry = state.geometry ?: return null
+    if (stops.size < 2) return null
+    return CpLive.build(
+        number = state.number,
+        stops = stops,
+        runDate = runDate,
+        geometry = geometry,
+        lastStationCode = trip.lastStationCode ?: train?.lastStationCode,
+        status = cpStatusOf(trip.status, train),
+        gpsPoint = train?.let { it.gpsLat to it.gpsLon },
+        gpsAt = train?.gpsAt?.let { CpLive.lisbon(it) },
+        passCode = train?.passCode,
+        passTime = train?.passTime,
+        passLeft = train?.passLeft,
+        dataAt = train?.dataAt?.takeIf { it > 0 }?.let { CpLive.lisbon(it) } ?: CpTime.now(),
+        stationPoint = ::cpStationPoint
+    )
 }
+
+/** Suprimido pela CP manda sobre o estado do GPS. */
+private fun cpStatusOf(tripStatus: String?, train: CpMapTrain?): String? =
+    if (tripStatus == VehicleStatus.CANCELLED) VehicleStatus.CANCELLED else train?.status ?: tripStatus
+
+/**
+ * Onde está o comboio aberto e quanto vai atrasado: a mesma conta do ecrã do comboio e dos avisos
+ * ([CpTrainNow]: a última estação da CP, as horas das paragens e o GPS só para o ponto do troço).
+ */
+fun cpNow(state: LiveMapViewModel.CpTripState?, train: CpMapTrain?, now: LocalDateTime = CpTime.now()): CpTrainNow? {
+    cpLiveOf(state, train)?.let { return it.now(now) }
+    // Sem traçado: só as horas e a última estação
+    val trip = state?.trip ?: return null
+    val stops = trip.trainStops.orEmpty()
+    val runDate = state.runDate ?: return null
+    if (stops.isEmpty()) return null
+    return CpTrainNow.of(
+        stops, CpTripClock.moments(runDate, stops), trip.lastStationCode ?: train?.lastStationCode,
+        cpStatusOf(trip.status, train), null, now
+    )
+}
+
+/** A posição de [cpNow] em paragens (3.4 = 40 % entre a 4.ª e a 5.ª; -1 = ainda não saiu). */
+fun cpProgress(state: LiveMapViewModel.CpTripState?, train: CpMapTrain?, now: LocalDateTime = CpTime.now()): Float =
+    cpNow(state, train, now)?.position ?: -1f
+
 
 fun buildCpRoute(context: Context, state: LiveMapViewModel.CpTripState?, train: CpMapTrain?): FeatureCollection {
     val trip = state?.trip
@@ -383,19 +592,8 @@ fun buildCpRoute(context: Context, state: LiveMapViewModel.CpTripState?, train: 
         val known = at.filterNotNull()
         val start = known.first()
         val end = known.last()
-        var here: Double? = null
-        if (pos >= 0) {
-            val i = pos.toInt()
-            val j = minOf(stops.lastIndex, i + 1)
-            val a = at[i]
-            val b = at[j]
-            here = when {
-                a == null || b == null -> a ?: b
-                // Entre duas paragens com GPS: corta no ponto do traçado onde está o comboio
-                train != null && pos % 1f != 0f -> track.locate(train.lat to train.lon).s.coerceIn(minOf(a, b), maxOf(a, b))
-                else -> a + (b - a) * (pos - i)
-            }
-        }
+        // Corta onde o comboio está (o mesmo ponto onde o mapa o desenha)
+        val here: Double? = if (pos >= 0) geometry.metersAt(pos) else null
         val split = if (pos < 0) start else (here ?: start).coerceIn(start, end)
         line("done", track.slice(start, split))
         line("ahead", track.slice(split, end))
@@ -426,101 +624,40 @@ fun applyCpRoute(map: MapLibreMap, route: FeatureCollection) {
     map.style?.getSourceAs<GeoJsonSource>("cp-route-src")?.setGeoJson(route)
 }
 
-// ── Barra de filtros ─────────────────────────────────────────────────────────
-
-@Composable
-fun MapFilterBar(
-    filters: Prefs.MapFilters,
-    cpServices: List<String>,
-    cpCount: Int,
-    onChange: ((Prefs.MapFilters) -> Prefs.MapFilters) -> Unit
-) {
-    var servicesOpen by remember { mutableStateOf(false) }
-    Surface(modifier = Modifier.fillMaxWidth(), color = Color(0xFF15161A).copy(alpha = 0.85f)) {
-        Column {
-            Row(
-                modifier = Modifier
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                FilterToggle("Metro", filters.metro, Color.White) { onChange { it.copy(metro = !it.metro) } }
-                FilterToggle(if (filters.cp && cpCount > 0) "Comboios · $cpCount" else "Comboios", filters.cp, CP_GREEN) {
-                    onChange { it.copy(cp = !it.cp) }
-                }
-                if (filters.cp) {
-                    FilterToggle(if (servicesOpen) "Tipos ▲" else "Tipos ▼", servicesOpen || filters.shownCpServices.isNotEmpty() || filters.cpOnlyDelayed, CP_GREEN) {
-                        servicesOpen = !servicesOpen
-                    }
-                }
-                FilterToggle("Amigos", filters.friends, MetrotimeBlueCompat) { onChange { it.copy(friends = !it.friends) } }
-                FilterToggle("Paragens", filters.busStops, Color(0xFFFFCC00)) { onChange { it.copy(busStops = !it.busStops) } }
-            }
-            if (filters.cp && servicesOpen) {
-                Row(
-                    modifier = Modifier
-                        .horizontalScroll(rememberScrollState())
-                        .padding(start = 12.dp, end = 12.dp, bottom = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Toca num tipo para ver só esse; noutro para o juntar (AP + IC…); "Todos" volta a mostrar tudo
-                    FilterToggle("Todos", filters.shownCpServices.isEmpty(), CP_GREEN) {
-                        onChange { it.copy(shownCpServices = emptySet()) }
-                    }
-                    val services = (cpServices + filters.shownCpServices).distinct().sortedBy { CpService.ORDER.indexOf(it) }
-                    services.forEach { service ->
-                        val on = service in filters.shownCpServices
-                        FilterToggle(service, on, getServiceColor(service)) {
-                            onChange { f ->
-                                f.copy(shownCpServices = if (on) f.shownCpServices - service else f.shownCpServices + service)
-                            }
-                        }
-                    }
-                    FilterToggle("Só atrasados", filters.cpOnlyDelayed, CpTone.VERY_LATE.color()) {
-                        onChange { it.copy(cpOnlyDelayed = !it.cpOnlyDelayed) }
-                    }
-                }
-            }
-        }
-    }
-}
-
-private val MetrotimeBlueCompat = Color(0xFF3B82F6)
-
-@Composable
-private fun FilterToggle(text: String, on: Boolean, color: Color, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(999.dp))
-            .background(if (on) color.copy(alpha = 0.18f) else Color(0xFF26272C))
-            .border(1.dp, if (on) color.copy(alpha = 0.7f) else Color(0xFF3A3B40), RoundedCornerShape(999.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(Modifier.size(8.dp).clip(CircleShape).background(if (on) color else Color.Gray))
-        Spacer(Modifier.width(6.dp))
-        Text(text, color = if (on) Color.White else Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-    }
-}
-
 // ── Painel do comboio aberto ─────────────────────────────────────────────────
 
-private fun whereText(train: CpMapTrain?, stops: List<CpTrainStop>, pos: Float): String {
-    if (train == null) return "Já não está em circulação."
+private fun whereText(train: CpMapTrain?, stops: List<CpTrainStop>, now: CpTrainNow?): String {
     fun name(i: Int) = stops.getOrNull(i)?.station?.designation?.let { formatStationName(it) }
+    if (now == null) return if (train == null) "Já não está em circulação." else ""
     return when {
-        train.status == VehicleStatus.NOT_STARTED || pos < 0 -> "Ainda não saiu de ${train.origin ?: name(0) ?: "?"}."
-        train.status == VehicleStatus.AT_ORIGIN -> "Na origem, ${train.origin ?: name(0) ?: "?"}."
-        pos % 1f == 0f -> name(pos.toInt())?.let { "Parado em $it." } ?: ""
+        now.cancelled -> "Suprimido: não se realiza hoje."
+        now.finished -> name(now.stopIndex)?.let { "Chegou a $it." } ?: ""
+        !now.started -> "Ainda não saiu de ${name(0) ?: train?.origin ?: "?"}."
+        now.atStation && now.arriving -> name(now.stopIndex)?.let { "A chegar a $it." } ?: ""
+        now.atStation -> name(now.stopIndex)?.let { "Parado em $it." } ?: ""
         else -> {
-            val a = name(pos.toInt())
-            val b = name(pos.toInt() + 1)
+            val a = name(now.stopIndex)
+            val b = name(now.stopIndex + 1)
             if (a != null && b != null) "Entre $a e $b." else ""
         }
     }
+}
+
+/** O atraso do painel: o do próximo acontecimento (o mesmo da lista), ou o do GPS se não houver horas. */
+private fun delayBadge(train: CpMapTrain?, now: CpTrainNow?): Pair<String, CpTone> {
+    val minutes = now?.delayMinutes ?: train?.delaySeconds?.let { Math.round(it / 60.0).toInt() }
+    val tone = if (now?.cancelled == true) CpTone.VERY_LATE
+    else if (train == null && now?.finished != false) CpTone.IDLE
+    else CpTone.ofSeconds(minutes?.times(60), hasRealtime = now?.started ?: (train?.status != VehicleStatus.NOT_STARTED))
+    val text = when {
+        now?.cancelled == true -> "Suprimido"
+        train == null && (now == null || now.finished) -> "Terminado"
+        now != null && !now.started && (minutes ?: 0) <= 0 -> "Programado"
+        minutes == null -> "Sem dados"
+        minutes < 2 -> "A horas"
+        else -> "+$minutes min"
+    }
+    return text to tone
 }
 
 @Composable
@@ -530,30 +667,40 @@ fun CpTrainSheet(
     state: LiveMapViewModel.CpTripState?,
     onClose: () -> Unit,
     onDetails: (runDate: String?) -> Unit,
-    onFollow: (runDate: String, stops: List<CpTrainStop>) -> Unit
+    onFollow: (runDate: String, stops: List<CpTrainStop>) -> Unit,
+    /** A cor do painel: o verde da CP; o azul da Fertagus nos comboios dela. */
+    accent: Color = CP_GREEN,
+    /** "Detalhes" e "Seguir comboio" (usam a API da CP: na Fertagus não há). */
+    actions: Boolean = true,
+    /** De onde vêm os dados, em baixo (a Fertagus vem do GO Hub da TML, com o horário). */
+    footnote: String? = null
 ) {
     val trip = state?.trip
     val stops = trip?.trainStops.orEmpty()
     var now by remember { mutableStateOf(CpTime.now()) }
     LaunchedEffect(Unit) {
-        while (true) { kotlinx.coroutines.delay(15_000); now = CpTime.now() }
+        while (true) { kotlinx.coroutines.delay(5_000); now = CpTime.now() }
     }
-    val pos = remember(state, train, now) { cpProgress(state, train, now) }
+    val trainNow = remember(state, train, now) { cpNow(state, train, now) }
+    val pos = trainNow?.position ?: -1f
     val moments = remember(state) { state?.runDate?.let { CpTripClock.moments(it, stops) } }
     val service = train?.service ?: CpService.shortName(trip?.effectiveService?.code)
-    val tone = train?.tone ?: CpTone.IDLE
+    val (badgeText, tone) = delayBadge(train, trainNow)
     val destination = train?.destination ?: stops.lastOrNull()?.station?.designation?.let { formatStationName(it) } ?: "?"
     val origin = train?.origin ?: stops.firstOrNull()?.station?.designation?.let { formatStationName(it) } ?: "?"
 
+    val drag = rememberSheetDrag(key = number)
+    val density = LocalDensity.current
     Surface(
-        modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp).sheetDrag(drag, density),
         color = PANEL,
         shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
         border = androidx.compose.foundation.BorderStroke(1.dp, PANEL_LINE)
     ) {
         Column(modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 8.dp, bottom = 12.dp).navigationBarsPadding()) {
-            Box(Modifier.align(Alignment.CenterHorizontally).size(width = 32.dp, height = 4.dp).clip(RoundedCornerShape(2.dp)).background(PANEL_LINE))
-            Spacer(Modifier.height(10.dp))
+            // Pega: puxar para baixo fecha
+            SheetHandle(drag, onClose, color = PANEL_LINE, height = 24.dp)
+            Spacer(Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(
@@ -564,38 +711,47 @@ fun CpTrainSheet(
                     Text("Comboio $number · $origin → $destination", color = MUTED, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 Box(
-                    Modifier.clip(RoundedCornerShape(999.dp)).background(if (train == null) CpTone.IDLE.color() else tone.color())
+                    Modifier.clip(RoundedCornerShape(999.dp)).background(tone.color())
                         .padding(horizontal = 9.dp, vertical = 4.dp)
                 ) {
-                    Text(
-                        if (train == null) "Terminado" else cpDelayText(train.delaySeconds, train.status),
-                        color = Color(0xFF0B100E), fontWeight = FontWeight.Bold, fontSize = 12.sp
-                    )
+                    Text(badgeText, color = Color(0xFF0B100E), fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 }
                 IconButton(onClick = onClose) { Icon(Icons.Filled.Close, contentDescription = "Fechar", tint = Color.White) }
             }
-            Text(whereText(train, stops, pos), color = MUTED, fontSize = 14.sp)
-            // Próxima paragem, hora e linha de embarque
-            val nextIdx = if (pos < 0) 0 else kotlin.math.ceil(pos.toDouble()).toInt().let { if (pos % 1f == 0f) it + 1 else it }
+            Text(whereText(train, stops, trainNow), color = MUTED, fontSize = 14.sp)
+            if (trip?.offline == true) {
+                Text("A CP não responde: atrasos pelo GPS do comboio.", color = Color(0xFFFFB74D), fontSize = 12.sp)
+            }
+            // Próxima paragem, com a mesma hora da lista (a partida; no fim do percurso, a chegada) e a linha
+            val nextIdx = trainNow?.nextIndex ?: 0
             val next = stops.getOrNull(nextIdx)
-            if (next != null && moments != null) {
-                val at = moments[nextIdx].let { m -> m.arrivalOrDeparture?.format(HM)?.let { if (m.estimated) "~$it" else it } }
-                val label = if (pos < 0) "Partida às $at" else "Próxima: ${formatStationName(next.station?.designation ?: "")} às $at"
+            if (next != null && moments != null && trainNow?.finished != true && trainNow?.cancelled != true) {
+                val m = moments[nextIdx]
+                val last = nextIdx == stops.lastIndex
+                val at = (if (last) m.arrivalOrDeparture else m.departureOrArrival)?.format(HM)?.let { if (m.estimated) "~$it" else it }
+                val name = formatStationName(next.station?.designation ?: "")
+                val label = when {
+                    trainNow == null || !trainNow.started || trainNow.atStation -> "Parte de $name às $at"
+                    last -> "Chega a $name às $at"
+                    else -> "Próxima: $name às $at"
+                }
                 val platform = next.platform?.takeIf { it.isNotBlank() && it != "0" }?.let { " · Linha $it" } ?: ""
                 Text(label + platform, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, modifier = Modifier.padding(top = 6.dp))
             }
 
-            Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { onDetails(state?.runDate?.toString() ?: train?.runDate) }) {
-                    Text("Detalhes", color = Color.White)
-                }
-                val runDate = state?.runDate
-                if (runDate != null && stops.isNotEmpty()) {
-                    Button(
-                        onClick = { onFollow(runDate.toString(), stops) },
-                        colors = ButtonDefaults.buttonColors(containerColor = CP_GREEN)
-                    ) { Text("Seguir comboio", color = Color(0xFF0B100E), fontWeight = FontWeight.Bold) }
+            if (actions) {
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { onDetails(state?.runDate?.toString() ?: train?.runDate) }) {
+                        Text("Detalhes", color = Color.White)
+                    }
+                    val runDate = state?.runDate
+                    if (runDate != null && stops.isNotEmpty()) {
+                        Button(
+                            onClick = { onFollow(runDate.toString(), stops) },
+                            colors = ButtonDefaults.buttonColors(containerColor = accent)
+                        ) { Text("Seguir comboio", color = Color(0xFF0B100E), fontWeight = FontWeight.Bold) }
+                    }
                 }
             }
 
@@ -606,8 +762,9 @@ fun CpTrainSheet(
                 )
             } else {
                 Spacer(Modifier.height(10.dp))
-                CpRailStops(stops = stops, moments = moments, pos = if (train == null) -1f else pos, badge = service)
+                CpRailStops(stops = stops, moments = moments, pos = if (train == null) -1f else pos, badge = service, accent = accent)
             }
+            footnote?.let { Text(it, color = MUTED, fontSize = 11.sp, modifier = Modifier.padding(top = 8.dp)) }
         }
     }
 }
@@ -619,12 +776,25 @@ private val ROW_HEIGHT = 52.dp
  * e o comboio (etiqueta com o tipo de serviço) em cima dela — como no CP Bot.
  */
 @Composable
-fun CpRailStops(stops: List<CpTrainStop>, moments: List<CpTripClock.StopMoment>?, pos: Float, badge: String) {
+fun CpRailStops(
+    stops: List<CpTrainStop>, moments: List<CpTripClock.StopMoment>?, pos: Float, badge: String,
+    /** A cor da linha e da etiqueta do comboio (verde da CP; azul da Fertagus). */
+    accent: Color = CP_GREEN
+) {
     val scroll = rememberScrollState()
     val density = androidx.compose.ui.platform.LocalDensity.current
+    // Centro de cada linha (px), medido: com letra grande as linhas crescem e o comboio tem de as acompanhar
+    val centers = remember(stops.size) { mutableStateListOf<Float?>().apply { repeat(stops.size) { add(null) } } }
+    fun centerAt(p: Float): Float? {
+        val i = p.toInt().coerceIn(0, stops.lastIndex)
+        val a = centers.getOrNull(i) ?: return null
+        val b = centers.getOrNull(minOf(stops.lastIndex, i + 1)) ?: return a
+        return a + (b - a) * (p - i)
+    }
     // Começa com o comboio à vista
-    LaunchedEffect(pos >= 0, stops.size) {
-        if (pos > 1) scroll.scrollTo(with(density) { (ROW_HEIGHT * (pos - 1f)).roundToPx() })
+    val measured = centers.all { it != null }
+    LaunchedEffect(pos >= 0, stops.size, measured) {
+        if (pos > 1 && measured) centerAt(pos - 1f)?.let { scroll.scrollTo((it - with(density) { ROW_HEIGHT.toPx() } / 2).toInt().coerceAtLeast(0)) }
     }
     Box(Modifier.fillMaxWidth().heightIn(max = 260.dp).verticalScroll(scroll)) {
         Column {
@@ -635,17 +805,21 @@ fun CpRailStops(stops: List<CpTrainStop>, moments: List<CpTripClock.StopMoment>?
                     i < pos -> "passed"
                     else -> "ahead"
                 }
-                Row(Modifier.fillMaxWidth().height(ROW_HEIGHT), verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    Modifier.fillMaxWidth().heightIn(min = ROW_HEIGHT).height(IntrinsicSize.Min)
+                        .onGloballyPositioned { centers[i] = it.positionInParent().y + it.size.height / 2f },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Box(Modifier.width(56.dp).fillMaxHeight(), contentAlignment = Alignment.Center) {
-                        RailSegment(i, stops.lastIndex, pos)
+                        RailSegment(i, stops.lastIndex, pos, accent)
                         val size = if (state == "current") 16.dp else 12.dp
                         Box(
                             Modifier.size(size).clip(CircleShape)
                                 .background(if (state == "ahead") PANEL else Color.White)
-                                .border(2.dp, if (state == "ahead") CP_GREEN.copy(alpha = 0.55f) else Color.White, CircleShape)
+                                .border(2.dp, if (state == "ahead") accent.copy(alpha = 0.55f) else Color.White, CircleShape)
                         )
                     }
-                    Column(Modifier.weight(1f)) {
+                    Column(Modifier.weight(1f).padding(vertical = 4.dp)) {
                         Text(
                             formatStationName(stop.station?.designation ?: "?"),
                             color = when (state) { "passed" -> MUTED; "current" -> Color.White; else -> Color(0xFFE8ECEA) },
@@ -680,14 +854,15 @@ fun CpRailStops(stops: List<CpTrainStop>, moments: List<CpTripClock.StopMoment>?
             }
         }
         if (pos >= 0) {
-            // A etiqueta do comboio, em cima da linha, onde ele está
+            // A etiqueta do comboio, em cima da linha, onde ele está (nas posições medidas das linhas)
+            val y = centerAt(pos)?.let { with(density) { it.toDp() } } ?: (ROW_HEIGHT * pos + ROW_HEIGHT / 2)
             Box(
                 Modifier
-                    .offset(x = 28.dp - 20.dp, y = ROW_HEIGHT * pos + ROW_HEIGHT / 2 - 11.dp)
+                    .offset(x = 28.dp - 20.dp, y = y - 11.dp)
                     .width(40.dp).height(22.dp)
                     .clip(RoundedCornerShape(999.dp))
                     .background(Color.White)
-                    .border(2.dp, CP_GREEN, RoundedCornerShape(999.dp)),
+                    .border(2.dp, accent, RoundedCornerShape(999.dp)),
                 contentAlignment = Alignment.Center
             ) {
                 Text(badge, color = Color(0xFF0B0F0D), fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
@@ -698,7 +873,7 @@ fun CpRailStops(stops: List<CpTrainStop>, moments: List<CpTripClock.StopMoment>?
 
 /** Metade de cima e metade de baixo do segmento de linha de uma paragem. */
 @Composable
-private fun RailSegment(index: Int, lastIndex: Int, pos: Float) {
+private fun RailSegment(index: Int, lastIndex: Int, pos: Float, accent: Color = CP_GREEN) {
     Canvas(Modifier.fillMaxSize()) {
         val x = size.width / 2
         val mid = size.height / 2
@@ -711,8 +886,8 @@ private fun RailSegment(index: Int, lastIndex: Int, pos: Float) {
                 pos >= toPos -> toY
                 else -> fromY + (toY - fromY) * (pos - fromPos) / (toPos - fromPos)
             }
-            if (cut > fromY) drawLine(CP_GREEN, Offset(x, fromY), Offset(x, cut), stroke)
-            if (toY > cut) drawLine(CP_GREEN.copy(alpha = 0.75f), Offset(x, cut), Offset(x, toY), stroke, pathEffect = dash)
+            if (cut > fromY) drawLine(accent, Offset(x, fromY), Offset(x, cut), stroke)
+            if (toY > cut) drawLine(accent.copy(alpha = 0.75f), Offset(x, cut), Offset(x, toY), stroke, pathEffect = dash)
         }
         if (index > 0) draw(0f, mid, index - 0.5f, index.toFloat())
         if (index < lastIndex) draw(mid, size.height, index.toFloat(), index + 0.5f)

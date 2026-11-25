@@ -90,6 +90,31 @@ fun MetroTabContent(activity: ComponentActivity) {
                 }
             }
         } else {
+            // Percurso entre duas estações, com as mudanças de linha e o próximo metro
+            Card(
+                onClick = { activity.startActivity(TripPlannerActivity.newIntent(activity)) },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = CardBackground)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(MetrotimeBlue.copy(alpha = 0.2f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(RouteIcon, contentDescription = null, tint = MetrotimeBlue, modifier = Modifier.size(20.dp))
+                    }
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("Planear viagem", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Text("Percurso, mudanças de linha e hora de chegada", color = TextSecondaryDark, fontSize = 12.sp)
+                    }
+                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, tint = TextSecondaryDark, modifier = Modifier.size(16.dp))
+                }
+            }
             HomeSection("Linhas") {
                 METRO_LINES.forEach { (line, color) ->
                     val lineStatus = (status as? MetroNow.Lines)?.statuses?.firstOrNull { it.line == line }

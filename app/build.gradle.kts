@@ -19,19 +19,24 @@ android {
 
     defaultConfig {
         applicationId = "com.example.metrotime"
-        minSdk = 34
+        minSdk = 31
         targetSdk = 34
-        versionCode = 12
-        versionName = "3.0"
+        versionCode = 45
+        versionName = "3.9.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
         }
+        // Só português e inglês: as traduções das bibliotecas para as outras ~80 línguas ocupavam ~1 MB
+        resourceConfigurations += listOf("pt", "en")
         buildConfigField("String", "METRO_API_TOKEN", "\"${localProps.getProperty("metro.api.token", "")}\"")
     }
 
     buildTypes {
         release {
+            // A mesma assinatura das versões de teste já instaladas (e das que a app descarrega para se atualizar):
+            // a versão otimizada instala-se por cima, sem perder dados
+            signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -63,6 +68,11 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+        // Bibliotecas nativas comprimidas no APK (as do MapLibre são ~11 MB): APK mais pequeno para enviar e
+        // descarregar; o Android descomprime-as ao instalar
+        jniLibs {
+            useLegacyPackaging = true
         }
     }
 }
@@ -117,4 +127,6 @@ dependencies {
 
     // Testes da lógica pura (data/cp)
     testImplementation(libs.junit)
+    // org.json a sério nos testes (o do Android não funciona fora do telemóvel): para ler a rede da CP e as amostras
+    testImplementation("org.json:json:20240303")
 }

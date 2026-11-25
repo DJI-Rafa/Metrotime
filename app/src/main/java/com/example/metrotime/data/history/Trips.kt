@@ -29,7 +29,13 @@ data class Trip(
     /** Comboio: o serviço (AP, IC, IR, R, U, IN, FT); null nos antigos. */
     val service: String? = null,
     /** Comboio: o número ("521"). */
-    val trainNumber: String? = null
+    val trainNumber: String? = null,
+    /** Comboio: a maior velocidade mantida 20 s seguidos (km/h, pelo GPS do telemóvel); null nos antigos. */
+    val topKmh: Double? = null,
+    /** Comboio: minutos de atraso à chegada à estação onde saíste (negativo = adiantado); null sem dados. */
+    val delayMin: Int? = null,
+    /** Comboio: dia de greve na CP (aviso de greve e mais suprimidos do que a circular, [com.example.metrotime.data.cp.CpStrike]). */
+    val strikeDay: Boolean = false
 ) {
     /** Minutos a bordo, se se sabe o fim (no máximo 3 h, para um fim errado não estragar as contas). */
     val minutes: Int? get() = endMs?.let { ((it - startMs) / 60_000).toInt().coerceIn(0, 180) }
@@ -46,6 +52,11 @@ object TripRules {
     const val DUPLICATE_WINDOW_MS = 30 * 60 * 1000L
     /** Um troço que começa onde o anterior acabou, até este tempo depois, é a continuação da viagem. */
     const val CHAIN_WINDOW_MS = 6 * 60 * 1000L
+    /**
+     * Comboio: o mesmo comboio apanhado outra vez até este tempo depois é a mesma viagem (a app deixou de o
+     * ver numa paragem ou enquanto a posição dele chegava atrasada, e voltou a dar por ele).
+     */
+    const val TRAIN_CHAIN_WINDOW_MS = 45 * 60 * 1000L
 
     /** Viagem de metro de A para B pela rede (linhas e km pela linha). */
     fun metroTrip(id: String, from: String, to: String, startMs: Long, endMs: Long, source: String): Trip {
@@ -68,9 +79,11 @@ object TripRules {
 
     /**
      * Se [next] começa na estação onde [last] acabou, logo a seguir (troços à superfície em que o GPS
-     * volta a apanhar uma estação a meio), junta os dois numa só viagem de metro.
+     * volta a apanhar uma estação a meio), junta os dois numa só viagem de metro. Nos comboios, junta os
+     * troços do mesmo comboio ([chainTrain]); [trainKm] dá os km pelo traçado da viagem já junta.
      */
-    fun chain(last: Trip, next: Trip): Trip? {
+    fun chain(last: Trip, next: Trip, trainKm: (Trip) -> Double? = { null }): Trip? {
+        if (last.mode == "cp" && next.mode == "cp") return chainTrain(last, next, trainKm)
         if (last.mode != "metro" || next.mode != "metro") return null
         val end = last.endMs ?: return null
         if (last.toId == null || last.toId != next.fromId) return null
@@ -78,6 +91,54 @@ object TripRules {
         val to = next.toId ?: return null
         if (to == last.fromId) return null // ida e volta não é uma viagem só
         return metroTrip(last.id, last.fromId, to, last.startMs, next.endMs ?: end, last.source)
+    }
+
+    /**
+     * O mesmo comboio (número) outra vez, pouco depois de a app o ter perdido: uma viagem só, da primeira
+     * origem ao último destino. Os km são os do traçado entre as duas ([trainKm]) ou, sem ele, a soma dos troços.
+     */
+    fun chainTrain(last: Trip, next: Trip, trainKm: (Trip) -> Double? = { null }): Trip? {
+        val number = trainKey(last.trainNumber) ?: return null
+        if (trainKey(next.trainNumber) != number) return null
+        val end = last.endMs ?: return null
+        if (next.startMs < last.startMs || next.startMs - end > TRAIN_CHAIN_WINDOW_MS) return null
+        val toId = next.toId ?: next.fromId
+        val toName = next.toName ?: next.fromName
+        val back = toId == last.fromId
+        val joined = last.copy(
+            toId = if (back) null else toId,
+            toName = if (back) null else toName,
+            endMs = maxOf(end, next.endMs ?: end),
+            km = last.km + next.km,
+            service = last.service ?: next.service,
+            topKmh = listOfNotNull(last.topKmh, next.topKmh).maxOrNull(),
+            delayMin = next.delayMin ?: last.delayMin,
+            strikeDay = last.strikeDay || next.strikeDay
+        )
+        return trainKm(joined)?.takeIf { it > joined.km }?.let { joined.copy(km = it) } ?: joined
+    }
+
+    /** O número do comboio para comparar: sem espaços nem zeros à esquerda ("0621 " e "621" são o mesmo comboio). */
+    fun trainKey(number: String?): String? = number?.trim()?.trimStart('0')?.takeIf { it.isNotEmpty() }
+
+    /**
+     * Junta os troços do mesmo comboio que já estão guardados (de antes de se juntarem ao gravar): só quando
+     * não há outra viagem entre eles. Devolve a mesma lista se não houver nada a juntar.
+     */
+    fun mergeTrainLegs(trips: List<Trip>, trainKm: (Trip) -> Double? = { null }): List<Trip> {
+        val out = ArrayList<Trip>(trips.size)
+        var changed = false
+        for (t in trips.sortedBy { it.startMs }) {
+            val last = out.lastOrNull()
+            val joined = if (last != null && last.mode == "cp" && t.mode == "cp") chainTrain(last, t, trainKm) else null
+            if (joined != null) {
+                out[out.lastIndex] = joined
+                changed = true
+            } else {
+                out += t
+            }
+        }
+        return if (changed) out else trips
     }
 
     /** Fecha uma viagem só com origem (início manual) com o destino detetado depois. */

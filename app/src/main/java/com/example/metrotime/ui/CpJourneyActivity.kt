@@ -467,15 +467,21 @@ private fun JourneyCard(option: CpJourneyOption, onClick: () -> Unit) {
                 .cpStrip(if (option.suppressed) Color(0xFFFF5252) else serviceColor)
                 .padding(start = 18.dp, end = 14.dp, top = 12.dp, bottom = 12.dp)
         ) {
+            // Como no quadro da estação: a hora real em grande (a cor do atraso) e a prevista riscada
+            val dep = option.realDeparture
+            val arr = option.realArrival
+            val late = !option.suppressed && dep != option.departure
+            val lateColor = if ((delay ?: 0) > 5) Color(0xFFFF5252) else Color(0xFFFFC107)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(option.departure.format(HM), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, textDecoration = strike)
+                Text(dep.format(HM), color = if (late) lateColor else Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, textDecoration = strike)
+                if (late) Text(" " + option.departure.format(HM), color = Color.Gray, fontSize = 12.sp, textDecoration = TextDecoration.LineThrough)
                 Text("  →  ", color = Color.Gray, fontSize = 14.sp)
-                Text(option.arrival.format(HM), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, textDecoration = strike)
-                if (option.departure.toLocalDate().isAfter(today)) {
+                Text(arr.format(HM), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, textDecoration = strike)
+                if (dep.toLocalDate().isAfter(today)) {
                     Text("  · amanhã", color = Color.Gray, fontSize = 12.sp)
                 }
                 Spacer(Modifier.weight(1f))
-                val minutes = option.duration.toMinutes()
+                val minutes = java.time.Duration.between(dep, arr).toMinutes()
                 Text(if (minutes >= 60) "${minutes / 60}h ${minutes % 60}min" else "$minutes min", color = Color.Gray, fontSize = 13.sp)
             }
             Spacer(Modifier.height(6.dp))

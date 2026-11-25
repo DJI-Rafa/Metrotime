@@ -212,8 +212,9 @@ private suspend fun withArrivals(activity: ComponentActivity, rows: List<Pair<Bu
     }.awaitAll()
 }
 
+/** Paragens favoritas com as próximas chegadas; [title] null = só o cartão (no "Agora" da página inicial). */
 @Composable
-private fun BusFavoriteStops(activity: ComponentActivity) {
+internal fun BusFavoriteStops(activity: ComponentActivity, title: String? = "As tuas paragens") {
     var rows by remember { mutableStateOf<List<StopRow>>(emptyList()) }
     LaunchedEffect(Unit) {
         activity.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -233,7 +234,7 @@ private fun BusFavoriteStops(activity: ComponentActivity) {
         }
     }
     if (rows.isEmpty()) return
-    HomeSection("As tuas paragens") {
+    val card: @Composable () -> Unit = {
         BusCard {
             rows.forEachIndexed { i, row ->
                 if (i > 0) BusDivider()
@@ -241,6 +242,7 @@ private fun BusFavoriteStops(activity: ComponentActivity) {
             }
         }
     }
+    if (title == null) card() else HomeSection(title) { card() }
 }
 
 /** Até três paragens a menos de 500 m (uma por nome), pela última localização conhecida. */
