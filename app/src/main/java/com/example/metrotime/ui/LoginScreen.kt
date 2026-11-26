@@ -29,6 +29,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.example.metrotime.R // Make sure you have your drawables here
+import com.example.metrotime.ui.theme.MetrotimeBlueDark
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.database.FirebaseDatabase
@@ -95,12 +96,12 @@ fun LoginScreen(navController: NavController) {
                     ) {
 
                         val textFieldColors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color(0xFF00529B),
+                            focusedBorderColor = MetrotimeBlueDark,
                             unfocusedBorderColor = Color.Gray.copy(alpha = 0.5f),
                             focusedTextColor = Color.Black,
                             unfocusedTextColor = Color.Black,
-                            cursorColor = Color(0xFF00529B),
-                            focusedLabelColor = Color(0xFF00529B),
+                            cursorColor = MetrotimeBlueDark,
+                            focusedLabelColor = MetrotimeBlueDark,
                             unfocusedLabelColor = Color.Gray
                         )
 
@@ -120,7 +121,7 @@ fun LoginScreen(navController: NavController) {
                         OutlinedTextField(
                             value = password,
                             onValueChange = { password = it },
-                            label = { Text("Password") },
+                            label = { Text("Palavra-passe") },
                             leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = Color.Gray) },
                             trailingIcon = {
                                 val image = if (passwordVisible) VisibilityIcon else VisibilityOffIcon
@@ -156,14 +157,14 @@ fun LoginScreen(navController: NavController) {
                                 .fillMaxWidth()
                                 .height(56.dp),
                             shape = RoundedCornerShape(16.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00529B)) // Strong Blue
+                            colors = ButtonDefaults.buttonColors(containerColor = MetrotimeBlueDark)
                         ) {
-                            Text("Log In", color = Color.White)
+                            Text("Entrar", color = Color.White)
                         }
 
                         Text(
-                            text = "Forgot password?",
-                            color = Color(0xFF4C82C2), // Light Blue
+                            text = "Recuperar palavra-passe?",
+                            color = MetrotimeBlueDark.copy(alpha = 0.82f),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 16.dp)
@@ -211,10 +212,14 @@ fun LoginScreen(navController: NavController) {
                                                             val db = FirebaseDatabase.getInstance("https://metrotime-569ec-default-rtdb.europe-west1.firebasedatabase.app")
                                                             val updates = mutableMapOf<String, Any>(
                                                                 "email" to (user.email ?: ""),
-                                                                "name" to (user.displayName ?: "Utilizador Google")
+                                                                "name" to (googleIdTokenCredential.displayName ?: user.displayName ?: "Utilizador Google")
                                                             )
-                                                            user.photoUrl?.let { updates["photoUrl"] = it.toString().replace("s96-c", "s400-c") } // Higher res image
-                                                            
+                                                            val picUrl = googleIdTokenCredential.profilePictureUri?.toString() ?: user.photoUrl?.toString()
+                                                            picUrl?.let { updates["photoUrl"] = it.replace("s96-c", "s400-c") } // Higher res image
+                                                            com.example.metrotime.data.UserDirectory.publishProfile(
+                                                                user.uid, updates["name"] as? String, user.email, updates["photoUrl"] as? String
+                                                            )
+
                                                             db.getReference("users").child(user.uid).updateChildren(updates)
                                                                 .addOnCompleteListener { 
                                                                     navController.navigate(Routes.HOME) { popUpTo(Routes.LOGIN) { inclusive = true } }
@@ -245,7 +250,7 @@ fun LoginScreen(navController: NavController) {
                                     modifier = Modifier.size(24.dp)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Continuar com o Google", color = Color(0xFF00529B), fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                                Text("Continuar com o Google", color = MetrotimeBlueDark, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                             }
                         }
 

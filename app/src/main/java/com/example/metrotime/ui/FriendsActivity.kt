@@ -30,8 +30,12 @@ import com.example.metrotime.ui.theme.CardBackground
 import com.example.metrotime.ui.theme.DarkBackground
 import com.example.metrotime.ui.theme.MetrotimeTheme
 import com.example.metrotime.ui.theme.Red40
+import com.example.metrotime.data.FIREBASE_DB_URL
+import com.example.metrotime.data.UserDirectory
+import com.example.metrotime.data.stringOrNull
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.*
+import kotlinx.coroutines.delay
 
 class FriendsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -71,72 +75,54 @@ fun FriendsScreen(onBack: () -> Unit) {
     val currentUid = currentUser?.uid ?: return
 
     // Firebase refs
-    val db = FirebaseDatabase.getInstance("https://metrotime-569ec-default-rtdb.europe-west1.firebasedatabase.app")
-    val usersRef = db.getReference("users")
+    val db = FirebaseDatabase.getInstance(FIREBASE_DB_URL)
     val friendsRef = db.getReference("friends").child(currentUid)
+    // Estado das amizades (uid -> estado), atualizado pelo listener
+    var friendStatuses by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
 
-    // Listen to friends list
-    LaunchedEffect(currentUid) {
-        friendsRef.addValueEventListener(object : ValueEventListener {
+    // Listen to friends list (listener removido ao sair do ecrã)
+    DisposableEffect(currentUid) {
+        val listener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
-                val newFriends = mutableListOf<UserProfile>()
-                
-                // For each friend, fetch their profile
-                for (friendSnapshot in snapshot.children) {
-                    val friendUid = friendSnapshot.key ?: continue
-                    val status = friendSnapshot.getValue(String::class.java) ?: continue
-                    
-                    usersRef.child(friendUid).get().addOnSuccessListener { userSnap ->
-                        val name = userSnap.child("name").getValue(String::class.java) ?: "Desconhecido"
-                        val email = userSnap.child("email").getValue(String::class.java) ?: ""
-                        
-                        newFriends.add(UserProfile(friendUid, name, email, status))
-                        // Force recomposition
-                        friendsList = newFriends.toList()
-                    }
-                }
-                
-                if (!snapshot.exists()) {
-                    friendsList = emptyList()
-                }
+                friendStatuses = snapshot.children.mapNotNull { child ->
+                    val status = child.stringOrNull() ?: return@mapNotNull null
+                    child.key?.let { it to status }
+                }.toMap()
             }
 
             override fun onCancelled(error: DatabaseError) {}
-        })
+        }
+        friendsRef.addValueEventListener(listener)
+        onDispose { friendsRef.removeEventListener(listener) }
     }
 
-    // Search logic
-    LaunchedEffect(searchQuery) {
-        if (searchQuery.length < 3) {
+    // Perfis carregados de uma vez por cada mudança: um pedido antigo já não sobrescreve o mais recente
+    LaunchedEffect(friendStatuses) {
+        friendsList = friendStatuses.map { (uid, status) ->
+            val profile = runCatching { UserDirectory.getProfile(uid) }.getOrNull()
+            UserProfile(uid, profile?.name ?: "Desconhecido", "", status)
+        }
+    }
+
+    // Search logic: por nome nos perfis públicos, ou por email exato (os emails já não são públicos)
+    LaunchedEffect(searchQuery, friendStatuses) {
+        val query = searchQuery.trim()
+        if (query.length < 3) {
             searchResults = emptyList()
             return@LaunchedEffect
         }
-        
-        usersRef.addListenerForSingleValueEvent(object : ValueEventListener {
-            override fun onDataChange(snapshot: DataSnapshot) {
-                val results = mutableListOf<UserProfile>()
-                for (userSnap in snapshot.children) {
-                    val uid = userSnap.key ?: continue
-                    if (uid == currentUid) continue // don't show self
-                    
-                    val email = userSnap.child("email").getValue(String::class.java) ?: ""
-                    val name = userSnap.child("name").getValue(String::class.java) ?: "Desconhecido"
-                    
-                    // Case-insensitive search by email or name
-                    if (email.contains(searchQuery, ignoreCase = true) || name.contains(searchQuery, ignoreCase = true)) {
-                        
-                        // Check if already friend
-                        val existingFriend = friendsList.find { it.uid == uid }
-                        val status = existingFriend?.status ?: "none"
-                        
-                        results.add(UserProfile(uid, name, email, status))
-                    }
-                }
-                searchResults = results
+        delay(300) // debounce
+        val found = runCatching {
+            if (query.contains("@")) {
+                val uid = UserDirectory.findUidByEmail(query)
+                listOfNotNull(uid?.let { UserDirectory.getProfile(it) ?: UserDirectory.PublicProfile(it, "Utilizador", null, null) })
+            } else {
+                UserDirectory.getAllProfiles().filter { it.name.contains(query, ignoreCase = true) }
             }
-
-            override fun onCancelled(error: DatabaseError) {}
-        })
+        }.getOrDefault(emptyList())
+        searchResults = found
+            .filter { it.uid != currentUid }
+            .map { UserProfile(it.uid, it.name, "", friendStatuses[it.uid] ?: "none") }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -154,7 +140,7 @@ fun FriendsScreen(onBack: () -> Unit) {
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            placeholder = { Text("Procurar amigo...", color = Color.Gray) },
+            placeholder = { Text("Nome ou email exato...", color = Color.Gray) },
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search", tint = Color.Gray) },
             modifier = Modifier
                 .fillMaxWidth()
@@ -225,7 +211,7 @@ fun FriendsScreen(onBack: () -> Unit) {
                             // Fetch existing message
                             db.getReference("users").child(currentUid).child("friendSettings").child(user.uid).child("customMessage")
                                 .get().addOnSuccessListener { snap ->
-                                    customMessageText = snap.getValue(String::class.java) ?: ""
+                                    customMessageText = snap.stringOrNull() ?: ""
                                 }
                         })
                     }

@@ -1,8 +1,16 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.google.services)
+}
+
+// Segredos locais (local.properties não vai para o git)
+val localProps = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
 }
 
 android {
@@ -11,18 +19,24 @@ android {
 
     defaultConfig {
         applicationId = "com.example.metrotime"
-        minSdk = 34
+        minSdk = 31
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 45
+        versionName = "3.9.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
         }
+        // Só português e inglês: as traduções das bibliotecas para as outras ~80 línguas ocupavam ~1 MB
+        resourceConfigurations += listOf("pt", "en")
+        buildConfigField("String", "METRO_API_TOKEN", "\"${localProps.getProperty("metro.api.token", "")}\"")
     }
 
     buildTypes {
         release {
+            // A mesma assinatura das versões de teste já instaladas (e das que a app descarrega para se atualizar):
+            // a versão otimizada instala-se por cima, sem perder dados
+            signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -49,10 +63,16 @@ android {
     kotlinOptions { jvmTarget = "17" }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+        // Bibliotecas nativas comprimidas no APK (as do MapLibre são ~11 MB): APK mais pequeno para enviar e
+        // descarregar; o Android descomprime-as ao instalar
+        jniLibs {
+            useLegacyPackaging = true
         }
     }
 }
@@ -104,4 +124,9 @@ dependencies {
     implementation("androidx.credentials:credentials:1.2.2")
     implementation("androidx.credentials:credentials-play-services-auth:1.2.2")
     implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
+
+    // Testes da lógica pura (data/cp)
+    testImplementation(libs.junit)
+    // org.json a sério nos testes (o do Android não funciona fora do telemóvel): para ler a rede da CP e as amostras
+    testImplementation("org.json:json:20240303")
 }

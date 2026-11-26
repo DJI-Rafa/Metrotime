@@ -21,6 +21,13 @@ val CpIntercidades = Color(0xFF0055A4)
 val CpInterRegional = Color(0xFF008B45)
 val CpRegional = Color(0xFFFF8C00)
 val CpUrbano = Color(0xFF607D8B)
+val CpFertagus = Color(0xFF007DC5)
+val CpGreen = Color(0xFF388243) // verde do logótipo da CP
 
 val DarkBackground = Color(0xFF1E1F22)
 val CardBackground = Color(0xFF2B2D30)
+val MetrotimeBlue = Color(0xFF3B82F6)
+val MetrotimeBlueDark = Color(0xFF00529B)
+val TextPrimaryDark = Color(0xFFFFFFFF)
+val TextSecondaryDark = Color(0xFFB7BBC3)
+val TextOnYellow = Color(0xFF171717)

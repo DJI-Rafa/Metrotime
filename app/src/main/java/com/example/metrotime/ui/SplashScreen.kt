@@ -6,19 +6,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.navigation.NavController
-import com.example.metrotime.data.UserPreferencesRepository
 import com.example.metrotime.ui.theme.AppBackgrounds
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.delay
 
 @Composable
 fun SplashScreen(navController: NavController) {
-    val context = LocalContext.current
-    val userPrefs = UserPreferencesRepository(context)
-
     LaunchedEffect(key1 = true) {
         delay(750) // Minimum splash screen time
 

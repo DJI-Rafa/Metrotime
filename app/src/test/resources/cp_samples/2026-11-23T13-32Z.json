@@ -1,0 +1,1511 @@
+{
+ "at": 1795440727142,
+ "vehicles": {
+  "125": {
+   "bearing": 42,
+   "delay": 948,
+   "destination": {
+    "code": "94-2006",
+    "designation": "Porto Campanha"
+   },
+   "destinationETA": "15:04",
+   "destinationTime": "14:48",
+   "hasDisruptions": false,
+   "lastStation": "94-31039",
+   "latitude": "39.813830001487126",
+   "longitude": "-8.575309337355506",
+   "origin": {
+    "code": "94-30007",
+    "designation": "Lisboa Santa Apolonia"
+   },
+   "originETA": "12:00",
+   "originTime": "12:00",
+   "passCode": "94-34439",
+   "passLeft": true,
+   "passTime": "13:30:32",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "1",
+    "designation": "Alfa Pendular"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440719961,
+   "trainNumber": 125
+  },
+  "132": {
+   "bearing": 221,
+   "delay": -31,
+   "destination": {
+    "code": "94-30007",
+    "designation": "Lisboa Santa Apolonia"
+   },
+   "destinationETA": "16:30",
+   "destinationTime": "16:30",
+   "hasDisruptions": false,
+   "lastStation": "94-5074",
+   "latitude": "41.1751",
+   "longitude": "-8.5675",
+   "origin": {
+    "code": "94-29157",
+    "designation": "Braga"
+   },
+   "originETA": "13:00",
+   "originTime": "13:00",
+   "passCode": "94-4002",
+   "passLeft": true,
+   "passTime": "13:27:44",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "1",
+    "designation": "Alfa Pendular"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440712284,
+   "trainNumber": 132
+  },
+  "482": {
+   "bearing": 5,
+   "delay": 68,
+   "destination": {
+    "code": "94-34009",
+    "designation": "Entroncamento"
+   },
+   "destinationETA": "15:56",
+   "destinationTime": "15:55",
+   "hasDisruptions": false,
+   "lastStation": "94-57497",
+   "latitude": "38.9253217",
+   "longitude": "-7.169005",
+   "origin": {
+    "code": "71-37606",
+    "designation": "Badajoz"
+   },
+   "originETA": "13:11",
+   "originTime": "14:09",
+   "passCode": "94-57497",
+   "passLeft": true,
+   "passTime": "13:26:52",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "4",
+    "designation": "Regional"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440695977,
+   "trainNumber": 482
+  },
+  "684": {
+   "delay": 308,
+   "destination": {
+    "code": "94-83006",
+    "designation": "Evora"
+   },
+   "destinationETA": "14:28",
+   "destinationTime": "14:23",
+   "hasDisruptions": false,
+   "lastStation": "94-74476",
+   "latitude": "38.2042096",
+   "longitude": "-7.9441683",
+   "origin": {
+    "code": "94-75002",
+    "designation": "Beja"
+   },
+   "originTime": "13:10",
+   "passCode": "94-74476",
+   "passLeft": true,
+   "passTime": "13:27:22",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "2",
+    "designation": "Intercidades"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440704182,
+   "trainNumber": 684
+  },
+  "4415": {
+   "delay": 638,
+   "destination": {
+    "code": "94-34009",
+    "designation": "Entroncamento"
+   },
+   "destinationETA": "13:32",
+   "destinationTime": "13:21",
+   "hasDisruptions": false,
+   "lastStation": "94-32466",
+   "latitude": "39.4576",
+   "longitude": "-8.4781",
+   "origin": {
+    "code": "94-30007",
+    "designation": "Lisboa Santa Apolonia"
+   },
+   "originETA": "11:46",
+   "originTime": "11:45",
+   "passCode": "94-32466",
+   "passLeft": true,
+   "passTime": "13:25:53",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "4",
+    "designation": "Regional"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440695994,
+   "trainNumber": 4415
+  },
+  "5111": {
+   "bearing": 118,
+   "delay": 287,
+   "destination": {
+    "code": "94-43000",
+    "designation": "Sernada do Vouga"
+   },
+   "destinationETA": "14:25",
+   "destinationTime": "14:20",
+   "hasDisruptions": false,
+   "lastStation": "94-42077",
+   "latitude": "40.631027",
+   "longitude": "-8.5681505",
+   "origin": {
+    "code": "94-38000",
+    "designation": "Aveiro"
+   },
+   "originTime": "13:15",
+   "passCode": "94-42077",
+   "passLeft": false,
+   "passTime": "13:30:45",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "40",
+    "designation": "Regional"
+   },
+   "status": "AT_STATION",
+   "timestamp": 1795440712299,
+   "trainNumber": 5111
+  },
+  "5112": {
+   "bearing": 152,
+   "delay": 0,
+   "destination": {
+    "code": "94-38000",
+    "designation": "Aveiro"
+   },
+   "destinationETA": "14:30",
+   "destinationTime": "14:30",
+   "hasDisruptions": false,
+   "lastStation": "94-42325",
+   "latitude": "40.65335",
+   "longitude": "-8.458262",
+   "origin": {
+    "code": "94-43000",
+    "designation": "Sernada do Vouga"
+   },
+   "originETA": "13:23",
+   "originTime": "13:25",
+   "passCode": "94-42325",
+   "passLeft": false,
+   "passTime": "13:30:27",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "40",
+    "designation": "Regional"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440633365,
+   "trainNumber": 5112
+  },
+  "5207": {
+   "bearing": 27,
+   "delay": 1269,
+   "destination": {
+    "code": "94-44016",
+    "designation": "Espinho - Vouga"
+   },
+   "destinationETA": "13:44",
+   "destinationTime": "13:23",
+   "hasDisruptions": false,
+   "lastStation": "94-44107",
+   "latitude": "40.98056",
+   "longitude": "-8.5817217",
+   "origin": {
+    "code": "94-44339",
+    "designation": "Oliveira de Azemeis"
+   },
+   "originETA": "12:38",
+   "originTime": "12:20",
+   "passCode": "94-44107",
+   "passLeft": false,
+   "passTime": "13:25:34",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "40",
+    "designation": "Regional"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440686978,
+   "trainNumber": 5207
+  },
+  "5674": {
+   "bearing": 256,
+   "delay": 695,
+   "destination": {
+    "code": "94-53009",
+    "designation": "Castelo Branco"
+   },
+   "destinationETA": "14:01",
+   "destinationTime": "13:49",
+   "hasDisruptions": false,
+   "lastStation": "94-53355",
+   "latitude": "40.0953",
+   "longitude": "-7.4614",
+   "origin": {
+    "code": "94-54007",
+    "designation": "Covilha"
+   },
+   "originETA": "12:46",
+   "originTime": "12:45",
+   "passCode": "94-53355",
+   "passLeft": false,
+   "passTime": "13:31:35",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "4",
+    "designation": "Regional"
+   },
+   "status": "AT_STATION",
+   "timestamp": 1795440704195,
+   "trainNumber": 5674
+  },
+  "5905": {
+   "bearing": 67,
+   "delay": 28,
+   "destination": {
+    "code": "94-73569",
+    "designation": "Vila Real de Santo Antonio"
+   },
+   "destinationETA": "15:58",
+   "destinationTime": "15:58",
+   "hasDisruptions": false,
+   "lastStation": "94-90381",
+   "latitude": "37.15440650935091",
+   "longitude": "-8.608868284568743",
+   "origin": {
+    "code": "94-90464",
+    "designation": "Lagos"
+   },
+   "originETA": "13:22",
+   "originTime": "13:22",
+   "passCode": "94-90381",
+   "passLeft": false,
+   "passTime": "13:31:13",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "4",
+    "designation": "Regional"
+   },
+   "status": "AT_STATION",
+   "timestamp": 1795440719962,
+   "trainNumber": 5905
+  },
+  "6406": {
+   "bearing": 172,
+   "delay": 30,
+   "destination": {
+    "code": "94-62471",
+    "designation": "Torres Vedras"
+   },
+   "destinationETA": "14:00",
+   "destinationTime": "14:00",
+   "hasDisruptions": false,
+   "lastStation": "94-62745",
+   "latitude": "39.2942",
+   "longitude": "-9.162669",
+   "origin": {
+    "code": "94-63008",
+    "designation": "Caldas da Rainha"
+   },
+   "originETA": "13:15",
+   "originTime": "13:14",
+   "passCode": "94-62745",
+   "passLeft": false,
+   "passTime": "13:29:59",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "4",
+    "designation": "Regional"
+   },
+   "status": "AT_STATION",
+   "timestamp": 1795440669938,
+   "trainNumber": 6406
+  },
+  "15163": {
+   "bearing": 350,
+   "delay": 72,
+   "destination": {
+    "code": "94-24000",
+    "designation": "Guimaraes"
+   },
+   "destinationETA": "13:40",
+   "destinationTime": "13:39",
+   "hasDisruptions": false,
+   "lastStation": "94-28233",
+   "latitude": "41.3949",
+   "longitude": "-8.3182",
+   "origin": {
+    "code": "94-1008",
+    "designation": "Porto Sao Bento"
+   },
+   "originETA": "12:22",
+   "originTime": "12:20",
+   "passCode": "94-28233",
+   "passLeft": true,
+   "passTime": "13:30:27",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "55",
+    "designation": "Urbano do Porto"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440719962,
+   "trainNumber": 15163
+  },
+  "15166": {
+   "delay": 48,
+   "destination": {
+    "code": "94-1008",
+    "designation": "Porto Sao Bento"
+   },
+   "destinationETA": "14:06",
+   "destinationTime": "14:05",
+   "hasDisruptions": false,
+   "lastStation": "94-4630",
+   "latitude": "41.3378",
+   "longitude": "-8.5476",
+   "origin": {
+    "code": "94-24000",
+    "designation": "Guimaraes"
+   },
+   "originETA": "12:51",
+   "originTime": "12:51",
+   "passCode": "94-4630",
+   "passLeft": false,
+   "passTime": "13:31:48",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "55",
+    "designation": "Urbano do Porto"
+   },
+   "status": "AT_STATION",
+   "timestamp": 1795440720936,
+   "trainNumber": 15166
+  },
+  "15223": {
+   "bearing": 344,
+   "delay": 16,
+   "destination": {
+    "code": "94-29157",
+    "designation": "Braga"
+   },
+   "destinationETA": "13:58",
+   "destinationTime": "13:58",
+   "hasDisruptions": false,
+   "lastStation": "94-5074",
+   "latitude": "41.4263",
+   "longitude": "-8.521",
+   "origin": {
+    "code": "94-1008",
+    "designation": "Porto Sao Bento"
+   },
+   "originETA": "12:46",
+   "originTime": "12:45",
+   "passCode": "94-5074",
+   "passLeft": true,
+   "passTime": "13:30:01",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "55",
+    "designation": "Urbano do Porto"
+   },
+   "status": "NEAR_NEXT",
+   "timestamp": 1795440719962,
+   "trainNumber": 15223
+  },
+  "15226": {
+   "bearing": 197,
+   "delay": -15,
+   "destination": {
+    "code": "94-1008",
+    "designation": "Porto Sao Bento"
+   },
+   "destinationETA": "13:40",
+   "destinationTime": "13:40",
+   "hasDisruptions": false,
+   "lastStation": "94-3004",
+   "latitude": "41.1624",
+   "longitude": "-8.581",
+   "origin": {
+    "code": "94-29157",
+    "designation": "Braga"
+   },
+   "originETA": "12:26",
+   "originTime": "12:26",
+   "passCode": "94-3004",
+   "passLeft": true,
+   "passTime": "13:31:00",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "55",
+    "designation": "Urbano do Porto"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440719962,
+   "trainNumber": 15226
+  },
+  "15414": {
+   "delay": 0,
+   "destination": {
+    "code": "94-1008",
+    "designation": "Porto Sao Bento"
+   },
+   "destinationETA": "14:00",
+   "destinationTime": "14:00",
+   "hasDisruptions": false,
+   "lastStation": "94-8086",
+   "latitude": "41.186",
+   "longitude": "-8.4855",
+   "origin": {
+    "code": "94-8318",
+    "designation": "Penafiel"
+   },
+   "originETA": "13:05",
+   "originTime": "13:05",
+   "passCode": "94-8086",
+   "passLeft": false,
+   "passTime": "13:31:54",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "55",
+    "designation": "Urbano do Porto"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440704203,
+   "trainNumber": 15414
+  },
+  "15523": {
+   "delay": 8,
+   "destination": {
+    "code": "94-9001",
+    "designation": "Marco de Canaveses"
+   },
+   "destinationETA": "13:47",
+   "destinationTime": "13:47",
+   "hasDisruptions": false,
+   "lastStation": "94-8383",
+   "latitude": "41.2549",
+   "longitude": "-8.1905",
+   "origin": {
+    "code": "94-1008",
+    "designation": "Porto Sao Bento"
+   },
+   "originETA": "12:36",
+   "originTime": "12:35",
+   "passCode": "94-8383",
+   "passLeft": true,
+   "passTime": "13:28:53",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "55",
+    "designation": "Urbano do Porto"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440719963,
+   "trainNumber": 15523
+  },
+  "15526": {
+   "bearing": 205,
+   "delay": 8,
+   "destination": {
+    "code": "94-1008",
+    "designation": "Porto Sao Bento"
+   },
+   "destinationETA": "13:35",
+   "destinationTime": "13:35",
+   "hasDisruptions": false,
+   "lastStation": "94-2006",
+   "latitude": "41.146",
+   "longitude": "-8.5861",
+   "origin": {
+    "code": "94-9001",
+    "designation": "Marco de Canaveses"
+   },
+   "originETA": "12:14",
+   "originTime": "12:14",
+   "passCode": "94-2006",
+   "passLeft": true,
+   "passTime": "13:31:23",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "55",
+    "designation": "Urbano do Porto"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440719963,
+   "trainNumber": 15526
+  },
+  "15530": {
+   "delay": -11,
+   "destination": {
+    "code": "94-1008",
+    "designation": "Porto Sao Bento"
+   },
+   "destinationETA": "14:20",
+   "destinationTime": "14:20",
+   "hasDisruptions": false,
+   "lastStation": "94-8359",
+   "latitude": "41.2444",
+   "longitude": "-8.2661",
+   "origin": {
+    "code": "94-9001",
+    "designation": "Marco de Canaveses"
+   },
+   "originETA": "13:13",
+   "originTime": "13:13",
+   "passCode": "94-8359",
+   "passLeft": true,
+   "passTime": "13:31:04",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "55",
+    "designation": "Urbano do Porto"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440712312,
+   "trainNumber": 15530
+  },
+  "15629": {
+   "bearing": 43,
+   "delay": 101,
+   "destination": {
+    "code": "94-1008",
+    "designation": "Porto Sao Bento"
+   },
+   "destinationETA": "14:36",
+   "destinationTime": "14:35",
+   "hasDisruptions": false,
+   "lastStation": "94-38075",
+   "latitude": "40.70680871605485",
+   "longitude": "-8.569825018852587",
+   "origin": {
+    "code": "94-38000",
+    "designation": "Aveiro"
+   },
+   "originETA": "13:23",
+   "originTime": "13:23",
+   "passCode": "94-38075",
+   "passLeft": true,
+   "passTime": "13:29:56",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "55",
+    "designation": "Urbano do Porto"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440719963,
+   "trainNumber": 15629
+  },
+  "15731": {
+   "bearing": 180,
+   "delay": 130,
+   "destination": {
+    "code": "94-38000",
+    "designation": "Aveiro"
+   },
+   "destinationETA": "14:10",
+   "destinationTime": "14:07",
+   "hasDisruptions": false,
+   "lastStation": "94-39040",
+   "latitude": "41.0096",
+   "longitude": "-8.6443",
+   "origin": {
+    "code": "94-1008",
+    "designation": "Porto Sao Bento"
+   },
+   "originETA": "12:54",
+   "originTime": "12:55",
+   "passCode": "94-39040",
+   "passLeft": true,
+   "passTime": "13:27:55",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "55",
+    "designation": "Urbano do Porto"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440622532,
+   "trainNumber": 15731
+  },
+  "15920": {
+   "bearing": 173,
+   "delay": 1,
+   "destination": {
+    "code": "94-38299",
+    "designation": "Ovar"
+   },
+   "destinationETA": "13:37",
+   "destinationTime": "13:37",
+   "hasDisruptions": false,
+   "lastStation": "94-38356",
+   "latitude": "40.9233",
+   "longitude": "-8.6258",
+   "origin": {
+    "code": "94-21071",
+    "designation": "Leca do Balio"
+   },
+   "originETA": "12:22",
+   "originTime": "12:22",
+   "passCode": "94-38356",
+   "passLeft": false,
+   "passTime": "13:31:06",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "55",
+    "designation": "Urbano do Porto"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440719963,
+   "trainNumber": 15920
+  },
+  "15922": {
+   "delay": 0,
+   "destination": {
+    "code": "94-38299",
+    "designation": "Ovar"
+   },
+   "destinationETA": "13:57",
+   "destinationTime": "13:57",
+   "hasDisruptions": true,
+   "lastStation": "94-2006",
+   "latitude": "41.149",
+   "longitude": "-8.5844",
+   "origin": {
+    "code": "94-21071",
+    "designation": "Leca do Balio"
+   },
+   "originTime": "12:46",
+   "passCode": "94-2006",
+   "passLeft": false,
+   "passTime": "13:07:41",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "55",
+    "designation": "Urbano do Porto"
+   },
+   "status": "AT_STATION",
+   "timestamp": 1795439230493,
+   "trainNumber": 15922
+  },
+  "15924": {
+   "bearing": 102,
+   "delay": -15,
+   "destination": {
+    "code": "94-38299",
+    "designation": "Ovar"
+   },
+   "destinationTime": "14:37",
+   "hasDisruptions": false,
+   "lastStation": "94-21048",
+   "latitude": "41.19",
+   "longitude": "-8.6112",
+   "origin": {
+    "code": "94-21071",
+    "designation": "Leca do Balio"
+   },
+   "originTime": "13:22",
+   "passCode": "94-21048",
+   "passLeft": true,
+   "passTime": "13:31:30",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "55",
+    "designation": "Urbano do Porto"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440721035,
+   "trainNumber": 15924
+  },
+  "15929": {
+   "delay": 99,
+   "destination": {
+    "code": "94-21071",
+    "designation": "Leca do Balio"
+   },
+   "destinationETA": "13:38",
+   "destinationTime": "13:36",
+   "hasDisruptions": false,
+   "lastStation": "94-21048",
+   "latitude": "41.1899",
+   "longitude": "-8.6107",
+   "origin": {
+    "code": "94-2006",
+    "designation": "Porto Campanha"
+   },
+   "originETA": "13:19",
+   "originTime": "13:17",
+   "passCode": "94-21030",
+   "passLeft": true,
+   "passTime": "13:30:13",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "55",
+    "designation": "Urbano do Porto"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440719963,
+   "trainNumber": 15929
+  },
+  "15931": {
+   "bearing": 9,
+   "delay": 598,
+   "destination": {
+    "code": "94-21071",
+    "designation": "Leca do Balio"
+   },
+   "destinationETA": "14:09",
+   "destinationTime": "13:59",
+   "hasDisruptions": false,
+   "lastStation": "94-39115",
+   "latitude": "41.09847917224305",
+   "longitude": "-8.632205306360861",
+   "origin": {
+    "code": "94-38299",
+    "designation": "Ovar"
+   },
+   "originETA": "12:53",
+   "originTime": "12:52",
+   "passCode": "94-39115",
+   "passLeft": false,
+   "passTime": "13:31:28",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "55",
+    "designation": "Urbano do Porto"
+   },
+   "status": "AT_STATION",
+   "timestamp": 1795440696025,
+   "trainNumber": 15931
+  },
+  "15933": {
+   "delay": 8,
+   "destination": {
+    "code": "94-21071",
+    "designation": "Leca do Balio"
+   },
+   "destinationTime": "14:36",
+   "hasDisruptions": false,
+   "lastStation": "94-38299",
+   "latitude": "40.8651",
+   "longitude": "-8.617",
+   "origin": {
+    "code": "94-38299",
+    "designation": "Ovar"
+   },
+   "originTime": "13:31",
+   "passCode": "94-38299",
+   "passLeft": true,
+   "passTime": "13:31:23",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "55",
+    "designation": "Urbano do Porto"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440704209,
+   "trainNumber": 15933
+  },
+  "16021": {
+   "bearing": 4,
+   "delay": 150,
+   "destination": {
+    "code": "94-33001",
+    "designation": "Azambuja"
+   },
+   "destinationETA": "14:16",
+   "destinationTime": "14:15",
+   "hasDisruptions": false,
+   "lastStation": "94-31005",
+   "latitude": "38.7602733",
+   "longitude": "-9.1001367",
+   "origin": {
+    "code": "94-30007",
+    "designation": "Lisboa Santa Apolonia"
+   },
+   "originETA": "13:21",
+   "originTime": "13:20",
+   "passCode": "94-31005",
+   "passLeft": true,
+   "passTime": "13:26:27",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "45",
+    "designation": "Urbano de Lisboa"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440669950,
+   "trainNumber": 16021
+  },
+  "16022": {
+   "bearing": 221,
+   "delay": 18,
+   "destination": {
+    "code": "94-30007",
+    "designation": "Lisboa Santa Apolonia"
+   },
+   "destinationETA": "13:55",
+   "destinationTime": "13:55",
+   "hasDisruptions": false,
+   "lastStation": "94-31146",
+   "latitude": "38.859562",
+   "longitude": "-9.063787",
+   "origin": {
+    "code": "94-33001",
+    "designation": "Azambuja"
+   },
+   "originETA": "13:06",
+   "originTime": "13:05",
+   "passCode": "94-31146",
+   "passLeft": false,
+   "passTime": "13:31:48",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "45",
+    "designation": "Urbano de Lisboa"
+   },
+   "status": "AT_STATION",
+   "timestamp": 1795440712318,
+   "trainNumber": 16022
+  },
+  "16428": {
+   "delay": 778,
+   "destination": {
+    "code": "94-31310",
+    "designation": "Castanheira do Ribatejo"
+   },
+   "destinationETA": "14:00",
+   "destinationTime": "13:49",
+   "hasDisruptions": false,
+   "lastStation": "94-31039",
+   "latitude": "38.767757",
+   "longitude": "-9.099094",
+   "origin": {
+    "code": "94-67025",
+    "designation": "Alcantara - Terra"
+   },
+   "originETA": "12:56",
+   "originTime": "12:56",
+   "passCode": "94-31039",
+   "passLeft": false,
+   "passTime": "13:29:26",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "45",
+    "designation": "Urbano de Lisboa"
+   },
+   "status": "AT_STATION",
+   "timestamp": 1795440696026,
+   "trainNumber": 16428
+  },
+  "16430": {
+   "delay": 112,
+   "destination": {
+    "code": "94-31310",
+    "designation": "Castanheira do Ribatejo"
+   },
+   "destinationETA": "14:19",
+   "destinationTime": "14:19",
+   "hasDisruptions": false,
+   "lastStation": "94-67025",
+   "latitude": "38.7114067",
+   "longitude": "-9.173355",
+   "origin": {
+    "code": "94-67025",
+    "designation": "Alcantara - Terra"
+   },
+   "originTime": "13:26",
+   "passCode": "94-67025",
+   "passLeft": false,
+   "passTime": "13:17:52",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "45",
+    "designation": "Urbano de Lisboa"
+   },
+   "status": "AT_ORIGIN",
+   "timestamp": 1795440474180,
+   "trainNumber": 16430
+  },
+  "16528": {
+   "delay": 15,
+   "destination": {
+    "code": "94-67025",
+    "designation": "Alcantara - Terra"
+   },
+   "destinationETA": "14:08",
+   "destinationTime": "14:05",
+   "hasDisruptions": false,
+   "lastStation": "94-31112",
+   "latitude": "38.80995",
+   "longitude": "-9.0931383",
+   "origin": {
+    "code": "94-31310",
+    "designation": "Castanheira do Ribatejo"
+   },
+   "originETA": "13:09",
+   "originTime": "13:09",
+   "passCode": "94-31096",
+   "passLeft": true,
+   "passTime": "13:29:59",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "45",
+    "designation": "Urbano de Lisboa"
+   },
+   "status": "NEAR_NEXT",
+   "timestamp": 1795440712318,
+   "trainNumber": 16528
+  },
+  "16817": {
+   "bearing": 58,
+   "delay": 485,
+   "destination": {
+    "code": "94-36004",
+    "designation": "Coimbra-B"
+   },
+   "destinationETA": "14:13",
+   "destinationTime": "14:04",
+   "hasDisruptions": false,
+   "lastStation": "94-65052",
+   "latitude": "40.1405",
+   "longitude": "-8.6761",
+   "origin": {
+    "code": "94-64113",
+    "designation": "Figueira da Foz"
+   },
+   "originETA": "12:56",
+   "originTime": "12:56",
+   "passCode": "94-65052",
+   "passLeft": false,
+   "passTime": "13:31:19",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "5",
+    "designation": "Urbano de Coimbra"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440719964,
+   "trainNumber": 16817
+  },
+  "17229": {
+   "delay": 170,
+   "destination": {
+    "code": "94-91058",
+    "designation": "Praias do Sado-A"
+   },
+   "destinationETA": "13:35",
+   "destinationTime": "13:33",
+   "hasDisruptions": false,
+   "lastStation": "94-68130",
+   "latitude": "38.5178",
+   "longitude": "-8.8732",
+   "origin": {
+    "code": "94-95000",
+    "designation": "Barreiro"
+   },
+   "originETA": "12:55",
+   "originTime": "12:55",
+   "passCode": "94-68155",
+   "passLeft": true,
+   "passTime": "13:31:35",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "45",
+    "designation": "Urbano de Lisboa"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440719964,
+   "trainNumber": 17229
+  },
+  "17230": {
+   "delay": 63,
+   "destination": {
+    "code": "94-95000",
+    "designation": "Barreiro"
+   },
+   "destinationETA": "13:48",
+   "destinationTime": "13:48",
+   "hasDisruptions": false,
+   "lastStation": "94-68007",
+   "latitude": "38.6301283",
+   "longitude": "-8.9226933",
+   "origin": {
+    "code": "94-91058",
+    "designation": "Praias do Sado-A"
+   },
+   "originETA": "13:09",
+   "originTime": "13:10",
+   "passCode": "94-68007",
+   "passLeft": false,
+   "passTime": "13:29:31",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "45",
+    "designation": "Urbano de Lisboa"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440696028,
+   "trainNumber": 17230
+  },
+  "17231": {
+   "bearing": 110,
+   "delay": 24,
+   "destination": {
+    "code": "94-91058",
+    "designation": "Praias do Sado-A"
+   },
+   "destinationETA": "14:04",
+   "destinationTime": "14:03",
+   "hasDisruptions": false,
+   "lastStation": "94-95059",
+   "latitude": "38.6597",
+   "longitude": "-9.0445",
+   "origin": {
+    "code": "94-95000",
+    "designation": "Barreiro"
+   },
+   "originTime": "13:25",
+   "passCode": "94-95059",
+   "passLeft": false,
+   "passTime": "13:31:09",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "45",
+    "designation": "Urbano de Lisboa"
+   },
+   "status": "AT_STATION",
+   "timestamp": 1795440719964,
+   "trainNumber": 17231
+  },
+  "18260": {
+   "delay": 7,
+   "destination": {
+    "code": "94-61101",
+    "designation": "Sintra"
+   },
+   "destinationETA": "13:46",
+   "destinationTime": "13:45",
+   "hasDisruptions": false,
+   "lastStation": "94-61002",
+   "latitude": "38.769",
+   "longitude": "-9.2996",
+   "origin": {
+    "code": "94-31039",
+    "designation": "Lisboa Oriente"
+   },
+   "originETA": "12:58",
+   "originTime": "12:58",
+   "passCode": "94-61002",
+   "passLeft": true,
+   "passTime": "13:31:22",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "45",
+    "designation": "Urbano de Lisboa"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440721042,
+   "trainNumber": 18260
+  },
+  "18264": {
+   "delay": 179,
+   "destination": {
+    "code": "94-61101",
+    "designation": "Sintra"
+   },
+   "destinationETA": "14:07",
+   "destinationTime": "14:05",
+   "hasDisruptions": false,
+   "lastStation": "94-66050",
+   "latitude": "38.7414",
+   "longitude": "-9.1543",
+   "origin": {
+    "code": "94-31039",
+    "designation": "Lisboa Oriente"
+   },
+   "originETA": "13:20",
+   "originTime": "13:18",
+   "passCode": "94-66068",
+   "passLeft": true,
+   "passTime": "13:31:44",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "45",
+    "designation": "Urbano de Lisboa"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440719964,
+   "trainNumber": 18264
+  },
+  "18458": {
+   "delay": 311,
+   "destination": {
+    "code": "94-31039",
+    "designation": "Lisboa Oriente"
+   },
+   "destinationETA": "13:46",
+   "destinationTime": "13:42",
+   "hasDisruptions": false,
+   "lastStation": "94-60046",
+   "latitude": "38.7441",
+   "longitude": "-9.1947",
+   "origin": {
+    "code": "94-61101",
+    "designation": "Sintra"
+   },
+   "originETA": "12:57",
+   "originTime": "12:56",
+   "passCode": "94-60046",
+   "passLeft": true,
+   "passTime": "13:31:26",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "45",
+    "designation": "Urbano de Lisboa"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440719965,
+   "trainNumber": 18458
+  },
+  "18462": {
+   "delay": 48,
+   "destination": {
+    "code": "94-31039",
+    "designation": "Lisboa Oriente"
+   },
+   "destinationETA": "14:02",
+   "destinationTime": "14:02",
+   "hasDisruptions": false,
+   "lastStation": "94-60137",
+   "latitude": "38.752",
+   "longitude": "-9.2867",
+   "origin": {
+    "code": "94-61101",
+    "designation": "Sintra"
+   },
+   "originETA": "13:16",
+   "originTime": "13:16",
+   "passCode": "94-61002",
+   "passLeft": true,
+   "passTime": "13:30:18",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "45",
+    "designation": "Urbano de Lisboa"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440719965,
+   "trainNumber": 18462
+  },
+  "18674": {
+   "bearing": 155,
+   "delay": -15,
+   "destination": {
+    "code": "94-59006",
+    "designation": "Lisboa Rossio"
+   },
+   "destinationTime": "13:59",
+   "hasDisruptions": false,
+   "lastStation": "94-62042",
+   "latitude": "38.7819",
+   "longitude": "-9.3057",
+   "origin": {
+    "code": "94-62042",
+    "designation": "Mira Sintra - Melecas"
+   },
+   "originTime": "13:30",
+   "passCode": "94-62042",
+   "passLeft": true,
+   "passTime": "13:30:00",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "45",
+    "designation": "Urbano de Lisboa"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440719965,
+   "trainNumber": 18674
+  },
+  "18685": {
+   "delay": 25,
+   "destination": {
+    "code": "94-62042",
+    "designation": "Mira Sintra - Melecas"
+   },
+   "destinationETA": "13:52",
+   "destinationTime": "13:50",
+   "hasDisruptions": false,
+   "lastStation": "94-60038",
+   "latitude": "38.7467",
+   "longitude": "-9.2125",
+   "origin": {
+    "code": "94-59006",
+    "designation": "Lisboa Rossio"
+   },
+   "originETA": "13:23",
+   "originTime": "13:21",
+   "passCode": "94-60038",
+   "passLeft": false,
+   "passTime": "13:31:55",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "45",
+    "designation": "Urbano de Lisboa"
+   },
+   "status": "AT_STATION",
+   "timestamp": 1795440719965,
+   "trainNumber": 18685
+  },
+  "18843": {
+   "bearing": 291,
+   "delay": 91,
+   "destination": {
+    "code": "94-61101",
+    "designation": "Sintra"
+   },
+   "destinationETA": "13:42",
+   "destinationTime": "13:41",
+   "hasDisruptions": false,
+   "lastStation": "94-61044",
+   "latitude": "38.7841",
+   "longitude": "-9.32",
+   "origin": {
+    "code": "94-59006",
+    "designation": "Lisboa Rossio"
+   },
+   "originETA": "13:01",
+   "originTime": "13:01",
+   "passCode": "94-61044",
+   "passLeft": false,
+   "passTime": "13:32:01",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "45",
+    "designation": "Urbano de Lisboa"
+   },
+   "status": "AT_STATION",
+   "timestamp": 1795440719965,
+   "trainNumber": 18843
+  },
+  "18848": {
+   "delay": 93,
+   "destination": {
+    "code": "94-59006",
+    "designation": "Lisboa Rossio"
+   },
+   "destinationETA": "13:41",
+   "destinationTime": "13:39",
+   "hasDisruptions": false,
+   "lastStation": "94-60046",
+   "latitude": "38.7445",
+   "longitude": "-9.1995",
+   "origin": {
+    "code": "94-61101",
+    "designation": "Sintra"
+   },
+   "originETA": "13:00",
+   "originTime": "13:00",
+   "passCode": "94-60046",
+   "passLeft": false,
+   "passTime": "13:31:33",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "45",
+    "designation": "Urbano de Lisboa"
+   },
+   "status": "AT_STATION",
+   "timestamp": 1795440719965,
+   "trainNumber": 18848
+  },
+  "19049": {
+   "bearing": 267,
+   "delay": 251,
+   "destination": {
+    "code": "94-69260",
+    "designation": "Cascais"
+   },
+   "destinationETA": "13:43",
+   "destinationTime": "13:41",
+   "hasDisruptions": false,
+   "lastStation": "94-69187",
+   "latitude": "38.687605",
+   "longitude": "-9.3447183",
+   "origin": {
+    "code": "94-69005",
+    "designation": "Cais do Sodre"
+   },
+   "originETA": "12:59",
+   "originTime": "13:00",
+   "passCode": "94-69187",
+   "passLeft": false,
+   "passTime": "13:30:46",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "45",
+    "designation": "Urbano de Lisboa"
+   },
+   "status": "IN_TRANSIT",
+   "timestamp": 1795440704223,
+   "trainNumber": 19049
+  },
+  "19050": {
+   "bearing": 94,
+   "delay": 250,
+   "destination": {
+    "code": "94-69005",
+    "designation": "Cais do Sodre"
+   },
+   "destinationETA": "13:47",
+   "destinationTime": "13:44",
+   "hasDisruptions": false,
+   "lastStation": "94-69120",
+   "latitude": "38.698746",
+   "longitude": "-9.274388",
+   "origin": {
+    "code": "94-69260",
+    "designation": "Cascais"
+   },
+   "originETA": "13:04",
+   "originTime": "13:04",
+   "passCode": "94-69120",
+   "passLeft": false,
+   "passTime": "13:30:40",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "45",
+    "designation": "Urbano de Lisboa"
+   },
+   "status": "AT_STATION",
+   "timestamp": 1795440704223,
+   "trainNumber": 19050
+  },
+  "19051": {
+   "bearing": 286,
+   "delay": 2,
+   "destination": {
+    "code": "94-69260",
+    "designation": "Cascais"
+   },
+   "destinationETA": "14:01",
+   "destinationTime": "14:01",
+   "hasDisruptions": false,
+   "lastStation": "94-69088",
+   "latitude": "38.69833",
+   "longitude": "-9.229453",
+   "origin": {
+    "code": "94-69005",
+    "designation": "Cais do Sodre"
+   },
+   "originTime": "13:20",
+   "passCode": "94-69088",
+   "passLeft": false,
+   "passTime": "13:31:02",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "45",
+    "designation": "Urbano de Lisboa"
+   },
+   "status": "AT_STATION",
+   "timestamp": 1795440669958,
+   "trainNumber": 19051
+  },
+  "19052": {
+   "bearing": 117,
+   "delay": 71,
+   "destination": {
+    "code": "94-69005",
+    "designation": "Cais do Sodre"
+   },
+   "destinationETA": "14:05",
+   "destinationTime": "14:04",
+   "hasDisruptions": false,
+   "lastStation": "94-69237",
+   "latitude": "38.701294",
+   "longitude": "-9.386123",
+   "origin": {
+    "code": "94-69260",
+    "designation": "Cascais"
+   },
+   "originETA": "13:25",
+   "originTime": "13:24",
+   "passCode": "94-69237",
+   "passLeft": false,
+   "passTime": "13:30:40",
+   "runDate": "2026-11-23",
+   "service": {
+    "code": "45",
+    "designation": "Urbano de Lisboa"
+   },
+   "status": "AT_STATION",
+   "timestamp": 1795440704223,
+   "trainNumber": 19052
+  }
+ },
+ "routes": {
+  "125": "2026-11-23|94-30007,,12:00,0;94-31039,12:08,12:09,0;94-36004,13:45,13:47,0;94-38000,14:13,14:15,0;94-39164,14:42,14:43,0;94-2006,14:48,,0",
+  "132": "2026-11-23|94-29157,,13:00,0;94-6007,13:09,13:10,0;94-5074,13:14,13:15,0;94-2006,13:38,13:40,0;94-39164,13:44,13:45,0;94-38000,14:14,14:16,0;94-36004,14:41,14:43,0;94-31039,16:22,16:23,0;94-30007,16:30,,0",
+  "482": "2026-11-23|71-37606,,14:09,0;94-57497,13:24,13:25,0;94-57315,13:40,13:41,0;94-57174,13:52,13:53,0;94-57117,13:59,14:00,0;94-57000,14:09,14:10,0;94-56267,14:23,14:23,0;94-56101,14:37,14:37,0;94-56002,14:49,14:50,0;94-55293,14:59,14:59,0;94-55129,15:13,15:13,0;94-52001,15:22,15:23,0;94-51243,15:28,15:28,0;94-51185,15:33,15:34,0;94-51128,15:39,15:40,0;94-51102,15:43,15:43,0;94-51045,15:49,15:50,0;94-34009,15:55,,0",
+  "684": "2026-11-23|94-75002,,13:10,0;94-74476,13:21,13:22,0;94-74351,13:30,13:31,0;94-74278,13:38,13:39,0;94-74120,13:49,13:49,0;94-74005,13:58,14:05,0;94-83006,14:23,,0",
+  "4415": "2026-11-23|94-30007,,11:45,0;94-31039,11:52,11:53,0;94-31146,12:00,12:01,0;94-31187,12:04,12:05,0;94-31278,12:11,12:11,0;94-33001,12:23,12:28,0;94-33043,12:32,12:32,0;94-33084,12:35,12:36,0;94-32003,12:38,12:39,0;94-32045,12:42,12:43,0;94-32102,12:48,12:48,0;94-32185,12:55,12:55,0;94-32284,13:01,13:02,0;94-32383,13:08,13:09,0;94-32466,13:14,13:15,0;94-34009,13:21,,0",
+  "5111": "2026-11-23|94-38000,,13:15,0;94-42028,13:18,13:18,0;94-42051,13:22,13:22,0;94-42077,13:26,13:27,0;94-42093,13:30,13:30,0;94-42119,13:33,13:34,0;94-42127,13:37,13:37,0;94-42135,13:39,13:39,0;94-42150,13:42,13:42,0;94-42168,13:44,13:44,0;94-42176,13:46,13:46,0;94-42218,13:52,13:54,0;94-42259,14:00,14:00,0;94-42267,14:03,14:03,0;94-42291,14:07,14:07,0;94-42309,14:09,14:09,0;94-42325,14:13,14:14,0;94-43000,14:20,,0",
+  "5112": "2026-11-23|94-43000,,13:25,0;94-42325,13:31,13:32,0;94-42309,13:36,13:36,0;94-42291,13:38,13:38,0;94-42267,13:42,13:42,0;94-42259,13:45,13:45,0;94-42218,13:51,13:53,0;94-42176,13:57,13:57,0;94-42168,13:59,13:59,0;94-42150,14:01,14:01,0;94-42135,14:04,14:04,0;94-42127,14:06,14:06,0;94-42119,14:10,14:11,0;94-42093,14:14,14:14,0;94-42077,14:17,14:18,0;94-42051,14:22,14:22,0;94-42028,14:26,14:26,0;94-38000,14:30,,0",
+  "5207": "2026-11-23|94-44339,,12:20,0;94-44313,12:24,12:24,0;94-44297,12:28,12:28,0;94-44271,12:30,12:30,0;94-44255,12:34,12:35,0;94-44248,12:37,12:37,0;94-44222,12:41,12:41,0;94-44206,12:45,12:46,0;94-44198,12:47,12:47,0;94-44172,12:51,12:51,0;94-44156,12:55,12:55,0;94-44115,13:01,13:01,0;94-44107,13:05,13:06,0;94-44073,13:10,13:10,0;94-44057,13:13,13:13,0;94-44040,13:16,13:16,0;94-44032,13:18,13:18,0;94-44016,13:23,,0",
+  "5674": "2026-11-23|94-54007,,12:45,0;94-53678,12:49,12:50,0;94-53629,12:54,12:55,0;94-53546,13:01,13:01,0;94-53520,13:04,13:04,0;94-53504,13:06,13:07,0;94-53462,13:10,13:11,0;94-53397,13:16,13:16,0;94-53355,13:20,13:20,0;94-53314,13:24,13:24,0;94-53264,13:28,13:29,0;94-53215,13:32,13:33,0;94-53140,13:39,13:40,0;94-53009,13:49,,0",
+  "5905": "2026-11-23|94-90464,,13:22,0;94-90431,13:25,13:26,0;94-90381,13:31,13:31,0;94-90290,13:39,13:40,0;94-90274,13:42,13:43,0;94-90241,13:46,13:47,0;94-90183,13:53,13:54,0;94-90134,13:58,13:59,0;94-90092,14:03,14:04,0;94-90050,14:08,14:09,0;94-78006,14:14,14:15,0;94-78063,14:19,14:20,0;94-78147,14:27,14:32,0;94-78238,14:38,14:38,0;94-78253,14:41,14:42,0;94-78295,14:45,14:46,0;94-73007,14:53,14:56,0;94-73031,14:58,14:59,0;94-73106,15:05,15:06,0;94-73197,15:12,15:13,0;94-73205,15:15,15:16,0;94-73239,15:19,15:19,0;94-73262,15:23,15:23,0;94-73320,15:28,15:29,0;94-73338,15:31,15:32,0;94-73379,15:35,15:36,0;94-73452,15:41,15:46,0;94-73502,15:51,15:51,0;94-73544,15:54,15:55,0;94-73569,15:58,,0",
+  "6406": "2026-11-23|94-63008,,13:14,0;94-62836,13:18,13:19,0;94-62802,13:22,13:23,0;94-62786,13:26,13:26,0;94-62745,13:30,13:30,0;94-62703,13:35,13:36,0;94-62612,13:46,13:47,0;94-62547,13:53,13:53,0;94-62471,14:00,,0",
+  "15163": "2026-11-23|94-1008,,12:20,0;94-2006,12:24,12:25,0;94-3004,12:28,12:28,0;94-3038,12:30,12:31,0;94-3046,12:33,12:33,0;94-4002,12:38,12:39,0;94-4010,12:40,12:41,0;94-4051,12:44,12:44,0;94-4077,12:46,12:47,0;94-4101,12:49,12:50,0;94-4630,12:53,12:54,0;94-5009,12:57,12:58,0;94-28068,13:02,13:03,0;94-28100,13:07,13:08,0;94-28134,13:11,13:15,0;94-28159,13:17,13:18,0;94-28191,13:20,13:21,0;94-28209,13:23,13:24,0;94-28217,13:26,13:26,0;94-28233,13:28,13:29,0;94-28266,13:31,13:32,0;94-28290,13:34,13:35,0;94-24000,13:39,,0",
+  "15166": "2026-11-23|94-24000,,12:51,0;94-28290,12:55,12:55,0;94-28266,12:58,12:58,0;94-28233,13:01,13:01,0;94-28217,13:03,13:04,0;94-28209,13:06,13:06,0;94-28191,13:09,13:09,0;94-28159,13:12,13:12,0;94-28134,13:14,13:15,0;94-28100,13:18,13:18,0;94-28068,13:23,13:23,0;94-5009,13:27,13:28,0;94-4630,13:31,13:31,0;94-4101,13:35,13:35,0;94-4077,13:38,13:38,0;94-4051,13:40,13:41,0;94-4010,13:44,13:44,0;94-4002,13:46,13:47,0;94-3046,13:49,13:50,0;94-3038,13:52,13:52,0;94-3004,13:56,13:57,0;94-2006,14:00,14:01,0;94-1008,14:05,,0",
+  "15223": "2026-11-23|94-1008,,12:45,0;94-2006,12:49,12:50,0;94-3004,12:53,12:53,0;94-3038,12:55,12:56,0;94-3046,12:58,12:58,0;94-4002,13:03,13:04,0;94-4010,13:05,13:06,0;94-4036,13:08,13:08,0;94-4051,13:10,13:11,0;94-4077,13:13,13:13,0;94-4630,13:18,13:18,0;94-5009,13:21,13:21,0;94-5033,13:24,13:25,0;94-5058,13:26,13:27,0;94-5074,13:29,13:29,0;94-5108,13:32,13:32,0;94-5116,13:34,13:35,0;94-6007,13:37,13:37,0;94-29033,13:40,13:41,0;94-29066,13:43,13:43,0;94-29074,13:45,13:45,0;94-29090,13:47,13:48,0;94-29108,13:50,13:50,0;94-29116,13:52,13:52,0;94-29132,13:54,13:55,0;94-29157,13:58,,0",
+  "15226": "2026-11-23|94-29157,,12:26,0;94-29132,12:28,12:29,0;94-29116,12:31,12:31,0;94-29108,12:33,12:33,0;94-29090,12:35,12:36,0;94-29074,12:38,12:38,0;94-29066,12:40,12:40,0;94-29033,12:42,12:43,0;94-6007,12:45,12:46,0;94-5116,12:48,12:48,0;94-5108,12:50,12:51,0;94-5074,12:53,12:54,0;94-5058,12:56,12:56,0;94-5033,12:58,12:58,0;94-5009,13:02,13:02,0;94-4630,13:05,13:05,0;94-4077,13:10,13:11,0;94-4051,13:13,13:13,0;94-4036,13:15,13:16,0;94-4010,13:18,13:18,0;94-4002,13:20,13:21,0;94-3046,13:23,13:24,0;94-3038,13:26,13:26,0;94-3004,13:30,13:31,0;94-2006,13:34,13:35,0;94-1008,13:40,,0",
+  "15414": "2026-11-23|94-8318,,13:05,0;94-8276,13:08,13:08,0;94-8250,13:10,13:11,0;94-8243,13:13,13:13,0;94-8227,13:15,13:16,0;94-8201,13:18,13:18,0;94-8177,13:21,13:21,0;94-8151,13:23,13:24,0;94-8136,13:26,13:26,0;94-8102,13:29,13:29,0;94-8086,13:32,13:32,0;94-8060,13:34,13:35,0;94-8029,13:38,13:38,0;94-4002,13:41,13:42,0;94-3046,13:44,13:44,0;94-3038,13:46,13:47,0;94-3004,13:51,13:51,0;94-2006,13:55,13:56,0;94-1008,14:00,,0",
+  "15523": "2026-11-23|94-1008,,12:35,0;94-2006,12:39,12:40,0;94-3004,12:43,12:43,0;94-3038,12:45,12:46,0;94-3046,12:48,12:48,0;94-4002,12:52,12:53,0;94-8060,12:58,12:58,0;94-8086,13:00,13:01,0;94-8177,13:07,13:07,0;94-8227,13:11,13:11,0;94-8276,13:15,13:16,0;94-8318,13:18,13:19,0;94-8359,13:23,13:23,0;94-8383,13:26,13:28,0;94-8433,13:33,13:33,0;94-8474,13:37,13:42,0;94-9001,13:47,,0",
+  "15526": "2026-11-23|94-9001,,12:14,0;94-8474,12:19,12:25,0;94-8441,12:28,12:28,0;94-8433,12:31,12:34,0;94-8409,12:37,12:37,0;94-8383,12:40,12:41,0;94-8359,12:44,12:44,0;94-8334,12:47,12:47,0;94-8318,12:50,12:50,0;94-8276,12:53,12:53,0;94-8227,12:57,12:58,0;94-8177,13:01,13:02,0;94-8086,13:08,13:08,0;94-8060,13:10,13:11,0;94-4002,13:15,13:16,0;94-3046,13:18,13:19,0;94-3038,13:21,13:21,0;94-3004,13:25,13:26,0;94-2006,13:30,13:31,0;94-1008,13:35,,0",
+  "15530": "2026-11-23|94-9001,,13:13,0;94-8474,13:18,13:18,0;94-8433,13:22,13:23,0;94-8383,13:27,13:27,0;94-8359,13:30,13:31,0;94-8318,13:35,13:35,0;94-8276,13:38,13:38,0;94-8227,13:42,13:43,0;94-8177,13:46,13:47,0;94-8086,13:53,13:53,0;94-8060,13:56,13:56,0;94-4002,14:01,14:02,0;94-3046,14:04,14:05,0;94-3038,14:07,14:07,0;94-3004,14:11,14:12,0;94-2006,14:15,14:16,0;94-1008,14:20,,0",
+  "15629": "2026-11-23|94-38000,,13:23,0;94-38075,13:27,13:28,0;94-38117,13:31,13:31,0;94-38125,13:33,13:33,0;94-38158,13:36,13:36,0;94-38216,13:40,13:41,0;94-38240,13:43,13:44,0;94-38299,13:47,13:47,0;94-38372,13:52,13:53,0;94-38406,13:55,13:56,0;94-39008,13:59,14:00,0;94-39040,14:03,14:03,0;94-39115,14:08,14:09,0;94-39164,14:13,14:13,0;94-39172,14:15,14:16,0;94-2006,14:20,14:30,0;94-1008,14:35,,0",
+  "15731": "2026-11-23|94-1008,,12:55,0;94-2006,13:00,13:10,0;94-39172,13:13,13:14,0;94-39164,13:15,13:16,0;94-39115,13:19,13:20,0;94-39040,13:25,13:25,0;94-39008,13:28,13:29,0;94-38406,13:32,13:33,0;94-38372,13:35,13:36,0;94-38299,13:41,13:42,0;94-38240,13:45,13:45,0;94-38216,13:48,13:48,0;94-38158,13:52,13:53,0;94-38125,13:55,13:56,0;94-38117,13:57,13:58,0;94-38075,14:01,14:02,0;94-38000,14:07,,0",
+  "15920": "2026-11-23|94-21071,,12:22,0;94-21055,12:24,12:24,0;94-21048,12:26,12:31,0;94-21030,12:33,12:34,0;94-21006,12:36,12:37,0;94-3004,12:41,12:45,0;94-2006,12:49,12:55,0;94-39172,12:58,12:59,0;94-39164,13:00,13:01,0;94-39149,13:02,13:03,0;94-39123,13:05,13:05,0;94-39115,13:07,13:07,0;94-39081,13:10,13:10,0;94-39073,13:12,13:13,0;94-39057,13:15,13:15,0;94-39040,13:17,13:17,0;94-39008,13:20,13:21,0;94-38422,13:23,13:23,0;94-38414,13:25,13:26,0;94-38406,13:27,13:28,0;94-38356,13:31,13:31,0;94-38299,13:37,,0",
+  "15922": "2026-11-23|94-21071,,12:46,1;94-21055,12:48,12:48,1;94-21048,12:50,12:55,1;94-21030,12:58,12:58,1;94-21006,13:02,13:02,1;94-3004,13:07,13:07,1;94-2006,13:11,13:15,1;94-39172,13:18,13:19,0;94-39164,13:20,13:21,0;94-39149,13:22,13:23,0;94-39123,13:25,13:25,0;94-39115,13:27,13:27,0;94-39081,13:30,13:30,0;94-39073,13:32,13:33,0;94-39057,13:35,13:35,0;94-39040,13:37,13:37,0;94-39008,13:40,13:41,0;94-38414,13:44,13:44,0;94-38406,13:46,13:46,0;94-38372,13:49,13:49,0;94-38356,13:51,13:52,0;94-38299,13:57,,0",
+  "15924": "2026-11-23|94-21071,,13:22,0;94-21055,13:24,13:24,0;94-21048,13:26,13:31,0;94-21030,13:33,13:34,0;94-21006,13:36,13:37,0;94-3004,13:41,13:45,0;94-2006,13:49,13:55,0;94-39172,13:58,13:59,0;94-39164,14:00,14:01,0;94-39149,14:02,14:03,0;94-39123,14:05,14:05,0;94-39115,14:07,14:07,0;94-39081,14:10,14:10,0;94-39073,14:12,14:13,0;94-39057,14:15,14:15,0;94-39040,14:17,14:17,0;94-39008,14:20,14:21,0;94-38422,14:23,14:23,0;94-38414,14:25,14:26,0;94-38406,14:27,14:28,0;94-38356,14:31,14:31,0;94-38299,14:37,,0",
+  "15929": "2026-11-23|94-2006,,13:17,0;94-3004,13:20,13:21,0;94-21006,13:25,13:25,0;94-21030,13:28,13:28,0;94-21048,13:30,13:31,0;94-21055,13:33,13:33,0;94-21071,13:36,,0",
+  "15931": "2026-11-23|94-38299,,12:52,0;94-38356,12:57,12:58,0;94-38406,13:01,13:01,0;94-38414,13:03,13:03,0;94-38422,13:05,13:06,0;94-39008,13:08,13:08,0;94-39040,13:11,13:12,0;94-39057,13:13,13:14,0;94-39073,13:16,13:16,0;94-39081,13:18,13:19,0;94-39115,13:21,13:22,0;94-39123,13:24,13:24,0;94-39149,13:26,13:27,0;94-39164,13:28,13:29,0;94-39172,13:30,13:31,0;94-2006,13:35,13:41,0;94-3004,13:44,13:45,0;94-21006,13:49,13:49,0;94-21030,13:52,13:52,0;94-21048,13:54,13:55,0;94-21055,13:57,13:57,0;94-21071,13:59,,0",
+  "15933": "2026-11-23|94-38299,,13:31,0;94-38356,13:36,13:37,0;94-38372,13:39,13:39,0;94-38406,13:42,13:42,0;94-38414,13:44,13:44,0;94-39008,13:47,13:47,0;94-39040,13:50,13:51,0;94-39057,13:52,13:53,0;94-39073,13:55,13:55,0;94-39081,13:57,13:58,0;94-39115,14:00,14:01,0;94-39123,14:03,14:03,0;94-39149,14:05,14:06,0;94-39164,14:08,14:08,0;94-39172,14:10,14:11,0;94-2006,14:15,14:17,0;94-3004,14:20,14:21,0;94-21006,14:25,14:25,0;94-21030,14:28,14:28,0;94-21048,14:30,14:31,0;94-21055,14:33,14:33,0;94-21071,14:36,,0",
+  "16021": "2026-11-23|94-30007,,13:20,0;94-31005,13:25,13:26,0;94-31039,13:28,13:29,0;94-31047,13:30,13:31,0;94-31062,13:33,13:34,0;94-31070,13:38,13:38,0;94-31112,13:43,13:43,0;94-31146,13:46,13:47,0;94-31187,13:50,13:51,0;94-31237,13:54,13:54,0;94-31278,13:57,13:58,0;94-31310,14:01,14:01,0;94-31336,14:03,14:04,0;94-31377,14:07,14:08,0;94-31401,14:10,14:11,0;94-33001,14:15,,0",
+  "16022": "2026-11-23|94-33001,,13:05,0;94-31401,13:08,13:09,0;94-31377,13:11,13:12,0;94-31336,13:15,13:15,0;94-31310,13:17,13:18,0;94-31278,13:21,13:21,0;94-31237,13:24,13:25,0;94-31187,13:28,13:28,0;94-31146,13:31,13:32,0;94-31112,13:34,13:35,0;94-31070,13:38,13:38,0;94-31062,13:40,13:41,0;94-31047,13:43,13:43,0;94-31039,13:45,13:45,0;94-31005,13:48,13:49,0;94-30007,13:55,,0",
+  "16428": "2026-11-23|94-67025,,12:56,0;94-60004,13:01,13:01,0;94-66076,13:03,13:04,0;94-66050,13:07,13:07,0;94-66035,13:09,13:09,0;94-66019,13:13,13:13,0;94-31005,13:15,13:15,0;94-31039,13:17,13:18,0;94-31047,13:20,13:20,0;94-31062,13:23,13:23,0;94-31070,13:25,13:26,0;94-31112,13:29,13:30,0;94-31146,13:33,13:34,0;94-31187,13:38,13:38,0;94-31237,13:41,13:42,0;94-31278,13:45,13:45,0;94-31310,13:49,,0",
+  "16430": "2026-11-23|94-67025,,13:26,0;94-60004,13:31,13:31,0;94-66076,13:33,13:34,0;94-66050,13:37,13:37,0;94-66035,13:39,13:39,0;94-66019,13:43,13:43,0;94-31005,13:45,13:45,0;94-31039,13:47,13:48,0;94-31047,13:50,13:50,0;94-31062,13:53,13:53,0;94-31070,13:55,13:56,0;94-31112,13:59,14:00,0;94-31146,14:03,14:04,0;94-31187,14:08,14:08,0;94-31237,14:11,14:12,0;94-31278,14:15,14:15,0;94-31310,14:19,,0",
+  "16528": "2026-11-23|94-31310,,13:09,0;94-31278,13:12,13:13,0;94-31237,13:16,13:16,0;94-31187,13:19,13:20,0;94-31146,13:23,13:24,0;94-31112,13:27,13:28,0;94-31070,13:32,13:32,0;94-31062,13:35,13:35,0;94-31047,13:38,13:38,0;94-31039,13:41,13:41,0;94-31005,13:44,13:45,0;94-66019,13:46,13:47,0;94-66035,13:49,13:50,0;94-66050,13:51,13:52,0;94-66076,13:54,13:55,0;94-60004,13:57,13:58,0;94-67025,14:05,,0",
+  "16817": "2026-11-23|94-64113,,12:56,0;94-64097,12:59,13:00,0;94-64089,13:01,13:06,0;94-64055,13:09,13:09,0;94-64022,13:12,13:12,0;94-65128,13:15,13:15,0;94-65086,13:19,13:20,0;94-65052,13:23,13:23,0;94-65029,13:26,13:27,0;94-35006,13:30,13:34,0;94-35030,13:38,13:38,0;94-35055,13:41,13:41,0;94-35097,13:47,13:47,0;94-35105,13:49,13:50,0;94-35139,13:53,13:54,0;94-35147,13:56,13:56,0;94-35162,13:58,13:58,0;94-35170,14:00,14:01,0;94-36004,14:04,,0",
+  "17229": "2026-11-23|94-95000,,12:55,0;94-95026,12:57,12:57,0;94-95042,12:59,12:59,0;94-95059,13:01,13:01,0;94-95075,13:03,13:04,0;94-95109,13:06,13:07,0;94-95125,13:10,13:10,0;94-68007,13:13,13:14,0;94-68049,13:17,13:17,0;94-68080,13:21,13:21,0;94-68122,13:25,13:26,0;94-68130,13:27,13:27,0;94-91058,13:33,,0",
+  "17230": "2026-11-23|94-91058,,13:10,0;94-68130,13:16,13:16,0;94-68122,13:17,13:18,0;94-68080,13:22,13:23,0;94-68049,13:26,13:27,0;94-68007,13:30,13:30,0;94-95125,13:33,13:34,0;94-95109,13:36,13:37,0;94-95075,13:39,13:40,0;94-95059,13:41,13:42,0;94-95042,13:43,13:44,0;94-95026,13:45,13:46,0;94-95000,13:48,,0",
+  "17231": "2026-11-23|94-95000,,13:25,0;94-95026,13:27,13:27,0;94-95042,13:29,13:29,0;94-95059,13:31,13:31,0;94-95075,13:33,13:34,0;94-95109,13:36,13:37,0;94-95125,13:40,13:40,0;94-68007,13:43,13:44,0;94-68049,13:47,13:47,0;94-68080,13:51,13:51,0;94-68122,13:55,13:56,0;94-68130,13:57,13:57,0;94-91058,14:03,,0",
+  "18260": "2026-11-23|94-31039,,12:58,0;94-31005,13:01,13:01,0;94-66035,13:05,13:05,0;94-66050,13:07,13:07,0;94-66076,13:10,13:10,0;94-60046,13:13,13:14,0;94-60038,13:15,13:16,0;94-60095,13:17,13:18,0;94-60087,13:20,13:20,0;94-60103,13:22,13:23,0;94-60111,13:24,13:25,0;94-60137,13:27,13:27,0;94-61002,13:30,13:31,0;94-61044,13:34,13:35,0;94-61051,13:36,13:37,0;94-61069,13:38,13:39,0;94-61093,13:42,13:43,0;94-61101,13:45,,0",
+  "18264": "2026-11-23|94-31039,,13:18,0;94-31005,13:21,13:21,0;94-66035,13:25,13:25,0;94-66050,13:27,13:27,0;94-66076,13:30,13:30,0;94-60046,13:33,13:34,0;94-60038,13:35,13:36,0;94-60095,13:37,13:38,0;94-60087,13:40,13:40,0;94-60103,13:42,13:43,0;94-60111,13:44,13:45,0;94-60137,13:47,13:47,0;94-61002,13:50,13:51,0;94-61044,13:54,13:55,0;94-61051,13:56,13:57,0;94-61069,13:58,13:59,0;94-61093,14:02,14:03,0;94-61101,14:05,,0",
+  "18458": "2026-11-23|94-61101,,12:56,0;94-61093,12:57,12:58,0;94-61069,13:01,13:01,0;94-61051,13:03,13:03,0;94-61044,13:05,13:05,0;94-61002,13:08,13:09,0;94-60137,13:11,13:12,0;94-60111,13:14,13:14,0;94-60103,13:16,13:16,0;94-60087,13:19,13:19,0;94-60095,13:21,13:22,0;94-60038,13:23,13:24,0;94-60046,13:25,13:26,0;94-66076,13:29,13:29,0;94-66050,13:32,13:32,0;94-66035,13:34,13:34,0;94-31005,13:38,13:39,0;94-31039,13:42,,0",
+  "18462": "2026-11-23|94-61101,,13:16,0;94-61093,13:17,13:18,0;94-61069,13:21,13:21,0;94-61051,13:23,13:23,0;94-61044,13:25,13:25,0;94-61002,13:28,13:29,0;94-60137,13:31,13:32,0;94-60111,13:34,13:34,0;94-60103,13:36,13:36,0;94-60087,13:39,13:39,0;94-60095,13:41,13:42,0;94-60038,13:43,13:44,0;94-60046,13:45,13:46,0;94-66076,13:49,13:49,0;94-66050,13:52,13:52,0;94-66035,13:54,13:54,0;94-31005,13:58,13:59,0;94-31039,14:02,,0",
+  "18674": "2026-11-23|94-62042,,13:30,0;94-61002,13:33,13:33,0;94-60137,13:36,13:36,0;94-60111,13:38,13:39,0;94-60103,13:40,13:41,0;94-60087,13:43,13:43,0;94-60095,13:45,13:46,0;94-60038,13:47,13:48,0;94-60046,13:50,13:50,0;94-60004,13:54,13:54,0;94-59006,13:59,,0",
+  "18685": "2026-11-23|94-59006,,13:21,0;94-60004,13:24,13:24,0;94-60046,13:29,13:29,0;94-60038,13:31,13:32,0;94-60095,13:33,13:34,0;94-60087,13:36,13:36,0;94-60103,13:38,13:39,0;94-60111,13:41,13:41,0;94-60137,13:43,13:44,0;94-61002,13:46,13:47,0;94-62042,13:50,,0",
+  "18843": "2026-11-23|94-59006,,13:01,0;94-60004,13:04,13:04,0;94-60046,13:09,13:09,0;94-60038,13:11,13:12,0;94-60095,13:13,13:14,0;94-60087,13:16,13:16,0;94-60103,13:18,13:19,0;94-60111,13:21,13:21,0;94-60137,13:23,13:24,0;94-61002,13:26,13:27,0;94-61044,13:30,13:31,0;94-61051,13:32,13:33,0;94-61069,13:34,13:35,0;94-61093,13:38,13:39,0;94-61101,13:41,,0",
+  "18848": "2026-11-23|94-61101,,13:00,0;94-61093,13:01,13:02,0;94-61069,13:05,13:05,0;94-61051,13:07,13:07,0;94-61044,13:09,13:09,0;94-61002,13:13,13:13,0;94-60137,13:16,13:16,0;94-60111,13:18,13:19,0;94-60103,13:20,13:21,0;94-60087,13:23,13:23,0;94-60095,13:25,13:26,0;94-60038,13:27,13:28,0;94-60046,13:30,13:30,0;94-60004,13:34,13:34,0;94-59006,13:39,,0",
+  "19049": "2026-11-23|94-69005,,13:00,0;94-69013,13:02,13:02,0;94-69039,13:04,13:05,0;94-69054,13:07,13:08,0;94-69088,13:11,13:11,0;94-69104,13:13,13:14,0;94-69120,13:16,13:17,0;94-69146,13:19,13:19,0;94-69161,13:22,13:23,0;94-69179,13:24,13:25,0;94-69187,13:27,13:27,0;94-69203,13:29,13:30,0;94-69229,13:32,13:32,0;94-69237,13:34,13:35,0;94-69245,13:36,13:37,0;94-69252,13:38,13:39,0;94-69260,13:41,,0",
+  "19050": "2026-11-23|94-69260,,13:04,0;94-69252,13:05,13:06,0;94-69245,13:07,13:08,0;94-69237,13:10,13:10,0;94-69229,13:12,13:12,0;94-69203,13:14,13:15,0;94-69187,13:17,13:17,0;94-69179,13:20,13:20,0;94-69161,13:21,13:22,0;94-69146,13:25,13:25,0;94-69120,13:27,13:27,0;94-69104,13:30,13:30,0;94-69088,13:32,13:33,0;94-69054,13:36,13:36,0;94-69039,13:39,13:39,0;94-69013,13:41,13:42,0;94-69005,13:44,,0",
+  "19051": "2026-11-23|94-69005,,13:20,0;94-69013,13:22,13:22,0;94-69039,13:24,13:25,0;94-69054,13:27,13:28,0;94-69088,13:31,13:31,0;94-69104,13:33,13:34,0;94-69120,13:36,13:37,0;94-69146,13:39,13:39,0;94-69161,13:42,13:43,0;94-69179,13:44,13:45,0;94-69187,13:47,13:47,0;94-69203,13:49,13:50,0;94-69229,13:52,13:52,0;94-69237,13:54,13:55,0;94-69245,13:56,13:57,0;94-69252,13:58,13:59,0;94-69260,14:01,,0",
+  "19052": "2026-11-23|94-69260,,13:24,0;94-69252,13:25,13:26,0;94-69245,13:27,13:28,0;94-69237,13:30,13:30,0;94-69229,13:32,13:32,0;94-69203,13:34,13:35,0;94-69187,13:37,13:37,0;94-69179,13:40,13:40,0;94-69161,13:41,13:42,0;94-69146,13:45,13:45,0;94-69120,13:47,13:47,0;94-69104,13:50,13:50,0;94-69088,13:52,13:53,0;94-69054,13:56,13:56,0;94-69039,13:59,13:59,0;94-69013,14:01,14:02,0;94-69005,14:04,,0"
+ }
+}

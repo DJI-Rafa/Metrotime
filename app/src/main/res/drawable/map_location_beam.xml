@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Para onde estás virado, no ponto azul da tua localização (como no Google Maps): um feixe azul que se desvanece,
+  virado para cima (o mapa roda-o com a bússola). O centro da imagem é a tua posição; o feixe começa à volta do
+  ponto (aro branco de 22 dp) e não o tapa.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="88dp"
+    android:height="88dp"
+    android:viewportWidth="88"
+    android:viewportHeight="88">
+    <path android:pathData="M37.64,33.82 L20.68,6.69 A44,44 0 0,1 67.32,6.69 L50.36,33.82 A12,12 0 0,0 37.64,33.82 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="44"
+                android:centerY="44"
+                android:gradientRadius="44"
+                android:startColor="#991A73E8"
+                android:endColor="#001A73E8" />
+        </aapt:attr>
+    </path>
+</vector>

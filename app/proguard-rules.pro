@@ -33,14 +33,12 @@
     @retrofit2.http.* <methods>;
 }
 -dontwarn retrofit2.**
--keep class retrofit2.** { *; }
 -keepattributes Signature
 -keepattributes Exceptions
 
 # ── OkHttp ───────────────────────────────────────────────────────────────────
 -dontwarn okhttp3.**
 -dontwarn okio.**
--keep class okhttp3.** { *; }
 
 # ── GTFS Realtime Bindings (Protobuf) ────────────────────────────────────────
 -keep class com.google.transit.realtime.** { *; }
@@ -54,9 +52,9 @@
 -keep class com.example.metrotime.data.** { *; }
 
 # ── MapLibre ─────────────────────────────────────────────────────────────────
--keep class org.maplibre.** { *; }
+# (as regras do próprio MapLibre chegam: guardar tudo deixava ~570 classes inteiras na app)
 -dontwarn org.maplibre.**
 
 # ── Google Play Services ─────────────────────────────────────────────────────
--keep class com.google.android.gms.** { *; }
+# (os serviços do Google trazem as regras deles: guardar tudo deixava ~3900 classes inteiras na app)
 -dontwarn com.google.android.gms.**

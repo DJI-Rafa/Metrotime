@@ -3,7 +3,10 @@ package com.example.metrotime.ui.theme
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
 
@@ -72,6 +75,77 @@ val TrainIcon: ImageVector by lazy {
     }.build()
 }
 
+/** Bandeira de traço (reportar um problema numa estação). */
+val FlagIcon: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "Flag",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f
+    ).apply {
+        path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round) {
+            moveTo(5f, 22f)
+            lineTo(5f, 3f)
+            moveTo(5f, 4f)
+            lineTo(19f, 4f)
+            lineTo(16f, 8.5f)
+            lineTo(19f, 13f)
+            lineTo(5f, 13f)
+        }
+    }.build()
+}
+
+/** Relógio de traço (viagens recentes). */
+val ClockIcon: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "Clock",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f
+    ).apply {
+        path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round) {
+            moveTo(12f, 2f)
+            arcTo(10f, 10f, 0f, true, true, 11.99f, 2f)
+            close()
+            moveTo(12f, 6f)
+            lineTo(12f, 12f)
+            lineTo(16f, 14f)
+        }
+    }.build()
+}
+
+/** Trocar (setas para cima e para baixo), como o "swap_vert" do Material. */
+val SwapVertIcon: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "SwapVert",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f
+    ).apply {
+        path(fill = SolidColor(Color.Black)) {
+            moveTo(16f, 17.01f)
+            lineTo(16f, 10f)
+            lineTo(14f, 10f)
+            lineTo(14f, 17.01f)
+            lineTo(11f, 17.01f)
+            lineTo(15f, 21f)
+            lineTo(19f, 17.01f)
+            close()
+            moveTo(9f, 3f)
+            lineTo(5f, 6.99f)
+            lineTo(8f, 6.99f)
+            lineTo(8f, 14f)
+            lineTo(10f, 14f)
+            lineTo(10f, 6.99f)
+            lineTo(13f, 6.99f)
+            close()
+        }
+    }.build()
+}
+
 val CircleIcon: ImageVector by lazy {
     ImageVector.Builder(
         name = "Circle",
@@ -86,6 +160,222 @@ val CircleIcon: ImageVector by lazy {
             curveTo(2f, 17.52f, 6.48f, 22f, 12f, 22f)
             curveTo(17.52f, 22f, 22f, 17.52f, 22f, 12f)
             curveTo(22f, 6.48f, 17.52f, 2f, 12f, 2f)
+            close()
+        }
+    }.build()
+}
+
+val MapIcon: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "Map",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f
+    ).apply {
+        path(fill = SolidColor(Color.Black)) {
+            moveTo(15f, 5.1f)
+            lineTo(9f, 3f)
+            lineTo(3.7f, 5.05f)
+            curveTo(3.28f, 5.21f, 3f, 5.61f, 3f, 6.06f)
+            lineTo(3f, 19.5f)
+            curveTo(3f, 20.2f, 3.69f, 20.68f, 4.34f, 20.43f)
+            lineTo(9f, 18.62f)
+            lineTo(15f, 20.72f)
+            lineTo(20.3f, 18.67f)
+            curveTo(20.72f, 18.51f, 21f, 18.11f, 21f, 17.66f)
+            lineTo(21f, 4.22f)
+            curveTo(21f, 3.52f, 20.31f, 3.04f, 19.66f, 3.29f)
+            lineTo(15f, 5.1f)
+            close()
+            moveTo(10f, 5.38f)
+            lineTo(14f, 6.78f)
+            lineTo(14f, 18.34f)
+            lineTo(10f, 16.94f)
+            lineTo(10f, 5.38f)
+            close()
+            moveTo(5f, 6.75f)
+            lineTo(8f, 5.59f)
+            lineTo(8f, 16.9f)
+            lineTo(5f, 18.06f)
+            lineTo(5f, 6.75f)
+            close()
+            moveTo(19f, 16.97f)
+            lineTo(16f, 18.13f)
+            lineTo(16f, 6.82f)
+            lineTo(19f, 5.66f)
+            lineTo(19f, 16.97f)
+            close()
+        }
+    }.build()
+}
+
+val ChartIcon: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "Chart",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f
+    ).apply {
+        path(fill = SolidColor(Color.Black)) {
+            moveTo(5f, 19f)
+            lineTo(19f, 19f)
+            curveTo(19.55f, 19f, 20f, 19.45f, 20f, 20f)
+            curveTo(20f, 20.55f, 19.55f, 21f, 19f, 21f)
+            lineTo(4f, 21f)
+            curveTo(3.45f, 21f, 3f, 20.55f, 3f, 20f)
+            lineTo(3f, 5f)
+            curveTo(3f, 4.45f, 3.45f, 4f, 4f, 4f)
+            curveTo(4.55f, 4f, 5f, 4.45f, 5f, 5f)
+            lineTo(5f, 19f)
+            close()
+            moveTo(8f, 17f)
+            lineTo(8f, 11f)
+            lineTo(11f, 11f)
+            lineTo(11f, 17f)
+            lineTo(8f, 17f)
+            close()
+            moveTo(13f, 17f)
+            lineTo(13f, 7f)
+            lineTo(16f, 7f)
+            lineTo(16f, 17f)
+            lineTo(13f, 17f)
+            close()
+            moveTo(18f, 17f)
+            lineTo(18f, 13f)
+            lineTo(21f, 13f)
+            lineTo(21f, 17f)
+            lineTo(18f, 17f)
+            close()
+        }
+    }.build()
+}
+
+val FavoriteIcon: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "Favorite",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f
+    ).apply {
+        path(fill = SolidColor(Color.Black)) {
+            moveTo(12f, 17.27f)
+            lineTo(18.18f, 21f)
+            lineTo(16.54f, 13.97f)
+            lineTo(22f, 9.24f)
+            lineTo(14.81f, 8.63f)
+            lineTo(12f, 2f)
+            lineTo(9.19f, 8.63f)
+            lineTo(2f, 9.24f)
+            lineTo(7.46f, 13.97f)
+            lineTo(5.82f, 21f)
+            lineTo(12f, 17.27f)
+            close()
+        }
+    }.build()
+}
+
+val BusIcon: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "Bus",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f
+    ).apply {
+        path(fill = SolidColor(Color.Black), pathFillType = PathFillType.EvenOdd) {
+            moveTo(6.5f, 3f)
+            lineTo(17.5f, 3f)
+            curveTo(19.43f, 3f, 21f, 4.57f, 21f, 6.5f)
+            lineTo(21f, 16f)
+            curveTo(21f, 17.1f, 20.1f, 18f, 19f, 18f)
+            lineTo(19f, 20f)
+            curveTo(19f, 20.55f, 18.55f, 21f, 18f, 21f)
+            lineTo(17f, 21f)
+            curveTo(16.45f, 21f, 16f, 20.55f, 16f, 20f)
+            lineTo(16f, 18f)
+            lineTo(8f, 18f)
+            lineTo(8f, 20f)
+            curveTo(8f, 20.55f, 7.55f, 21f, 7f, 21f)
+            lineTo(6f, 21f)
+            curveTo(5.45f, 21f, 5f, 20.55f, 5f, 20f)
+            lineTo(5f, 18f)
+            curveTo(3.9f, 18f, 3f, 17.1f, 3f, 16f)
+            lineTo(3f, 6.5f)
+            curveTo(3f, 4.57f, 4.57f, 3f, 6.5f, 3f)
+            close()
+            moveTo(6.5f, 5f)
+            curveTo(5.67f, 5f, 5f, 5.67f, 5f, 6.5f)
+            lineTo(5f, 11f)
+            lineTo(19f, 11f)
+            lineTo(19f, 6.5f)
+            curveTo(19f, 5.67f, 18.33f, 5f, 17.5f, 5f)
+            lineTo(6.5f, 5f)
+            close()
+            moveTo(7.5f, 16f)
+            curveTo(6.67f, 16f, 6f, 15.33f, 6f, 14.5f)
+            curveTo(6f, 13.67f, 6.67f, 13f, 7.5f, 13f)
+            curveTo(8.33f, 13f, 9f, 13.67f, 9f, 14.5f)
+            curveTo(9f, 15.33f, 8.33f, 16f, 7.5f, 16f)
+            close()
+            moveTo(16.5f, 16f)
+            curveTo(15.67f, 16f, 15f, 15.33f, 15f, 14.5f)
+            curveTo(15f, 13.67f, 15.67f, 13f, 16.5f, 13f)
+            curveTo(17.33f, 13f, 18f, 13.67f, 18f, 14.5f)
+            curveTo(18f, 15.33f, 17.33f, 16f, 16.5f, 16f)
+            close()
+        }
+    }.build()
+}
+
+val BusStopIcon: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "BusStop",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f
+    ).apply {
+        path(fill = SolidColor(Color.Black)) {
+            moveTo(7f, 3f)
+            lineTo(17f, 3f)
+            curveTo(18.1f, 3f, 19f, 3.9f, 19f, 5f)
+            lineTo(19f, 14f)
+            curveTo(19f, 15.1f, 18.1f, 16f, 17f, 16f)
+            lineTo(16f, 16f)
+            lineTo(16f, 20f)
+            curveTo(16f, 20.55f, 15.55f, 21f, 15f, 21f)
+            curveTo(14.45f, 21f, 14f, 20.55f, 14f, 20f)
+            lineTo(14f, 16f)
+            lineTo(10f, 16f)
+            lineTo(10f, 20f)
+            curveTo(10f, 20.55f, 9.55f, 21f, 9f, 21f)
+            curveTo(8.45f, 21f, 8f, 20.55f, 8f, 20f)
+            lineTo(8f, 16f)
+            lineTo(7f, 16f)
+            curveTo(5.9f, 16f, 5f, 15.1f, 5f, 14f)
+            lineTo(5f, 5f)
+            curveTo(5f, 3.9f, 5.9f, 3f, 7f, 3f)
+            close()
+            moveTo(7f, 5f)
+            lineTo(7f, 9f)
+            lineTo(17f, 9f)
+            lineTo(17f, 5f)
+            lineTo(7f, 5f)
+            close()
+            moveTo(8f, 13f)
+            curveTo(8.55f, 13f, 9f, 12.55f, 9f, 12f)
+            curveTo(9f, 11.45f, 8.55f, 11f, 8f, 11f)
+            curveTo(7.45f, 11f, 7f, 11.45f, 7f, 12f)
+            curveTo(7f, 12.55f, 7.45f, 13f, 8f, 13f)
+            close()
+            moveTo(16f, 13f)
+            curveTo(16.55f, 13f, 17f, 12.55f, 17f, 12f)
+            curveTo(17f, 11.45f, 16.55f, 11f, 16f, 11f)
+            curveTo(15.45f, 11f, 15f, 11.45f, 15f, 12f)
+            curveTo(15f, 12.55f, 15.45f, 13f, 16f, 13f)
             close()
         }
     }.build()
@@ -169,6 +459,95 @@ val VisibilityOffIcon: ImageVector by lazy {
             curveTo(15.01f, 10.35f, 13.67f, 9.01f, 12.01f, 9.01f)
             lineTo(11.84f, 9.02f)
             close()
+        }
+    }.build()
+}
+
+/** Tempo real (o sinal do Google Maps): um ponto e dois arcos, para os autocarros seguidos por GPS. */
+val LiveIcon: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "Live",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f
+    ).apply {
+        // Ponto com centro em (5, 19) e arcos à volta dele
+        path(fill = SolidColor(Color.Black)) {
+            moveTo(5f, 16.5f)
+            arcTo(2.5f, 2.5f, 0f, true, true, 4.99f, 16.5f)
+            close()
+        }
+        path(stroke = SolidColor(Color.Black), strokeLineWidth = 2.6f, strokeLineCap = StrokeCap.Round) {
+            moveTo(5f, 11f)
+            arcTo(8f, 8f, 0f, false, true, 13f, 19f)
+            moveTo(5f, 4.5f)
+            arcTo(14.5f, 14.5f, 0f, false, true, 19.5f, 19f)
+        }
+    }.build()
+}
+
+/** Percurso (uma linha a subir com a seta), para a distância percorrida. */
+val RouteIcon: ImageVector by lazy {
+    ImageVector.Builder(name = "Route", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f).apply {
+        path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round) {
+            moveTo(3f, 17f); lineTo(9f, 11f); lineTo(13f, 15f); lineTo(21f, 7f)
+            moveTo(14f, 7f); lineTo(21f, 7f); lineTo(21f, 14f)
+        }
+    }.build()
+}
+
+/** Marcador de sítio, para as estações. */
+val PinIcon: ImageVector by lazy {
+    ImageVector.Builder(name = "Pin", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f).apply {
+        path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round) {
+            moveTo(12f, 21f)
+            curveTo(12f, 21f, 5f, 14.8f, 5f, 10f)
+            arcTo(7f, 7f, 0f, false, true, 19f, 10f)
+            curveTo(19f, 14.8f, 12f, 21f, 12f, 21f)
+            close()
+            moveTo(12f, 7.5f)
+            arcTo(2.5f, 2.5f, 0f, true, true, 11.99f, 7.5f)
+            close()
+        }
+    }.build()
+}
+
+// ── Ícones do planeador e do "Agora" (desenhados a partir de path data SVG) ──
+
+private fun strokeIcon(name: String, vararg paths: String): ImageVector =
+    ImageVector.Builder(name = name, defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f).apply {
+        paths.forEach {
+            addPath(
+                pathData = addPathNodes(it),
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 2f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round
+            )
+        }
+    }.build()
+
+/** Pessoa a andar (bocados da viagem a pé). */
+val WalkIcon: ImageVector by lazy {
+    strokeIcon("Walk", "M11 4a2 2 0 1 0 4 0a2 2 0 1 0 -4 0", "M10 22l2-7-3-3 1-4 4 3 3 1", "M7 13l1-4")
+}
+
+/** Barco (Transtejo, Soflusa). */
+val BoatIcon: ImageVector by lazy {
+    strokeIcon("Boat", "M3 14h18l-2.5 5h-13z", "M6 14V9h12v5", "M12 9V4", "M2 21c2 1 4 1 6 0s4-1 6 0 4 1 6 0")
+}
+
+/** Edifício de estação (cartão "As minhas estações"). */
+val StationIcon: ImageVector by lazy {
+    strokeIcon("Station", "M3 21h18", "M5 21V9l7-5 7 5v12", "M9 21v-6h6v6")
+}
+
+/** Pega de arrastar: seis pontos. */
+val DragHandleIcon: ImageVector by lazy {
+    ImageVector.Builder(name = "DragHandle", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f).apply {
+        listOf(9f to 6f, 15f to 6f, 9f to 12f, 15f to 12f, 9f to 18f, 15f to 18f).forEach { (x, y) ->
+            addPath(pathData = addPathNodes("M${x - 1.7f} ${y}a1.7 1.7 0 1 0 3.4 0a1.7 1.7 0 1 0 -3.4 0z"), fill = SolidColor(Color.Black))
         }
     }.build()
 }
